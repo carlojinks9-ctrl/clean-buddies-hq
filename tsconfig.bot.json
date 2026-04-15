@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "lib": ["es2020"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": false,
+    "esModuleInterop": true,
+    "outDir": "./dist/bot",
+    "rootDir": "./bot"
+  },
+  "include": ["bot/**/*.ts"],
+  "exclude": ["node_modules"]
+}
