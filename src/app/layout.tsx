@@ -10,6 +10,7 @@ export const metadata: Metadata = {
     icon: [
       { url: '/api/icon/32', sizes: '32x32', type: 'image/png' },
       { url: '/api/icon/192', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/clean-buddies-logo.svg', type: 'image/svg+xml' },
     ],
     apple: [
       { url: '/api/icon/180', sizes: '180x180', type: 'image/png' },
