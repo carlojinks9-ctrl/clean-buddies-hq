@@ -2,7 +2,7 @@
  * Jobber GraphQL API client with OAuth 2.0 and leaky bucket rate limiting.
  */
 
-const JOBBER_API_URL = 'https://api.getjobber.com/graphql'
+const JOBBER_API_URL = 'https://api.getjobber.com/api/graphql'
 const JOBBER_AUTH_URL = 'https://api.getjobber.com/api/oauth/authorize'
 const JOBBER_TOKEN_URL = 'https://api.getjobber.com/api/oauth/token'
 
@@ -104,16 +104,33 @@ export async function jobberQuery<T = unknown>(
     body: JSON.stringify({ query, variables }),
   })
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    // Distinguish auth failures (reconnect required) from other errors
-    if (res.status === 401 || res.status === 403) {
-      throw new Error(`JOBBER_UNAUTHORIZED: ${res.status} — Token invalid or revoked. Reconnect required. Detail: ${body}`)
-    }
-    throw new Error(`Jobber API error: ${res.status} ${res.statusText} — ${body}`)
+  const contentType = res.headers.get('content-type') || ''
+  const body = await res.text()
+
+  // Guard: if Jobber returned HTML it's hitting a redirect/login page — wrong endpoint or bad token
+  if (contentType.includes('text/html') || body.trimStart().startsWith('<')) {
+    throw new Error(
+      `Jobber returned HTML instead of JSON (HTTP ${res.status}). ` +
+      `Endpoint: ${JOBBER_API_URL} — Content-Type: ${contentType}. ` +
+      `HTML preview: ${body.slice(0, 150)}`
+    )
   }
 
-  const json = await res.json()
+  if (!res.ok) {
+    // Distinguish auth failures (reconnect required) from other errors
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`JOBBER_UNAUTHORIZED: ${res.status} — Token invalid or revoked. Reconnect required. Detail: ${body.slice(0, 200)}`)
+    }
+    throw new Error(`Jobber API error: ${res.status} ${res.statusText} — ${body.slice(0, 200)}`)
+  }
+
+  let json: any
+  try {
+    json = JSON.parse(body)
+  } catch {
+    throw new Error(`Jobber response was not valid JSON. Content-Type: ${contentType}. Body: ${body.slice(0, 200)}`)
+  }
+
   if (json.errors?.length) {
     throw new Error(`Jobber GraphQL errors: ${JSON.stringify(json.errors)}`)
   }
