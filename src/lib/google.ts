@@ -15,11 +15,20 @@ const SCOPES = [
   'profile',
 ].join(' ')
 
+// Derive redirect URI from NEXT_PUBLIC_APP_URL so Vercel prod and localhost both work.
+// Vercel / prod: set NEXT_PUBLIC_APP_URL=https://clean-buddies-hq.vercel.app
+// Local dev:     NEXT_PUBLIC_APP_URL=http://localhost:3000 (in .env.local)
+function getGoogleRedirectUri(): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL || process.env.GOOGLE_REDIRECT_URI
+  if (!base) throw new Error('NEXT_PUBLIC_APP_URL is not set')
+  return base.replace(/\/$/, '') + '/api/google/callback'
+}
+
 export function getGoogleAuthUrl(state: string): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: process.env.GOOGLE_CLIENT_ID!,
-    redirect_uri: process.env.GOOGLE_REDIRECT_URI!,
+    redirect_uri: getGoogleRedirectUri(),
     scope: SCOPES,
     access_type: 'offline',
     prompt: 'consent',
@@ -36,7 +45,7 @@ export async function exchangeGoogleCode(code: string): Promise<GoogleTokenRespo
       grant_type: 'authorization_code',
       client_id: process.env.GOOGLE_CLIENT_ID!,
       client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-      redirect_uri: process.env.GOOGLE_REDIRECT_URI!,
+      redirect_uri: getGoogleRedirectUri(),
       code,
     }),
   })

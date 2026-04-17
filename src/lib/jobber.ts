@@ -80,7 +80,10 @@ export async function refreshJobberToken(refreshToken: string): Promise<JobberTo
       refresh_token: refreshToken,
     }),
   })
-  if (!res.ok) throw new Error(`Jobber token refresh failed: ${res.statusText}`)
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`Jobber token refresh failed: ${res.status} ${res.statusText} — ${body}`)
+  }
   return res.json()
 }
 

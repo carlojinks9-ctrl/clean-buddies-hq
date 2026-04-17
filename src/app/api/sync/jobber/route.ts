@@ -33,10 +33,13 @@ export async function POST() {
     try {
       const refreshed = await refreshJobberToken(tokenRow.refresh_token!)
       accessToken = refreshed.access_token
+      const expiresIn = typeof (refreshed as any).expires_in === 'number' && (refreshed as any).expires_in > 0
+        ? (refreshed as any).expires_in
+        : 7200
       await db.from('integration_tokens').update({
         access_token: refreshed.access_token,
         refresh_token: refreshed.refresh_token,
-        expires_at: new Date(Date.now() + refreshed.expires_in * 1000).toISOString(),
+        expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
       }).eq('service', 'jobber')
     } catch (err) {
       return NextResponse.json({ error: 'Token refresh failed', detail: String(err) }, { status: 500 })
