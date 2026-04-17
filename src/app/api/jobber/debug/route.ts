@@ -37,7 +37,7 @@ export async function GET() {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'Authorization': `Bearer ${token}`,
-      'X-JOBBER-GRAPHQL-VERSION': '2024-01-15',
+      'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
       'User-Agent': 'CleanBuddiesHQ/1.0',
     },
     body: JSON.stringify({ query: '{ __typename }' }),

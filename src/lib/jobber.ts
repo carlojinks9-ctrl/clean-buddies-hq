@@ -98,7 +98,7 @@ export async function jobberQuery<T = unknown>(
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       Authorization: `Bearer ${accessToken}`,
-      'X-JOBBER-GRAPHQL-VERSION': '2024-01-15',
+      'X-JOBBER-GRAPHQL-VERSION': '2025-04-16',
       'User-Agent': 'CleanBuddiesHQ/1.0',
     },
     body: JSON.stringify({ query, variables }),
