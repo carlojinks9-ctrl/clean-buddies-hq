@@ -15,13 +15,20 @@ export async function GET(request: NextRequest) {
 
   try {
     const tokens = await exchangeJobberCode(code)
+    console.log('Jobber token response keys:', Object.keys(tokens), '| expires_in:', (tokens as any).expires_in)
     const db = createServerClient()
+
+    // expires_in may be absent or non-numeric from Jobber — default to 2 hours
+    const expiresIn = typeof (tokens as any).expires_in === 'number' && (tokens as any).expires_in > 0
+      ? (tokens as any).expires_in
+      : 7200
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()
 
     await db.from('integration_tokens').upsert({
       service: 'jobber',
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
-      expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      expires_at: expiresAt,
       metadata: { scope: tokens.scope },
     }, { onConflict: 'service' })
 

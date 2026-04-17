@@ -4,7 +4,11 @@ import { supabase } from '@/lib/supabase'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
-import { Settings, Zap, Calendar, Receipt, Send, Globe, Save, CheckCircle2, AlertCircle, ExternalLink } from 'lucide-react'
+import {
+  Settings, Zap, Calendar, Receipt, Send, Globe,
+  Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw,
+} from 'lucide-react'
+import { formatDistanceToNow } from 'date-fns'
 
 interface AppSetting {
   key: string
@@ -18,8 +22,8 @@ const INTEGRATIONS = [
     name: 'Jobber',
     description: 'Jobs, clients, invoices, timesheets',
     icon: '🔧',
-    status: 'not_connected',
     authPath: '/api/jobber/authorize',
+    syncPath: '/api/sync/jobber',
     docsUrl: 'https://developer.getjobber.com',
   },
   {
@@ -27,8 +31,8 @@ const INTEGRATIONS = [
     name: 'Google (Calendar + Gmail)',
     description: 'Schedule sync, email notifications',
     icon: '📅',
-    status: 'not_connected',
     authPath: '/api/google/authorize',
+    syncPath: null,
     docsUrl: 'https://developers.google.com',
   },
   {
@@ -36,8 +40,8 @@ const INTEGRATIONS = [
     name: 'QuickBooks Online',
     description: 'P&L, AR aging, payroll reconciliation',
     icon: '📊',
-    status: 'not_connected',
     authPath: '/api/qbo/authorize',
+    syncPath: null,
     docsUrl: 'https://developer.intuit.com',
   },
   {
@@ -45,8 +49,8 @@ const INTEGRATIONS = [
     name: 'Telegram Bot',
     description: 'CB Assistant — crew monitoring, supply requests',
     icon: '📱',
-    status: process.env.NEXT_PUBLIC_APP_URL ? 'connected' : 'not_connected',
     authPath: null,
+    syncPath: null,
     docsUrl: 'https://core.telegram.org/bots',
   },
 ]
@@ -57,17 +61,33 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [integrationStatus, setIntegrationStatus] = useState<Record<string, boolean>>({})
+  const [lastJobberSync, setLastJobberSync] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [banner, setBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   useEffect(() => {
+    // Handle OAuth callback query params
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('connected') === 'jobber') {
+      setBanner({ type: 'success', message: 'Jobber connected successfully.' })
+      window.history.replaceState({}, '', '/settings')
+    } else if (params.get('error') === 'jobber_auth_failed') {
+      setBanner({ type: 'error', message: 'Jobber connection failed — check your credentials and try again.' })
+      window.history.replaceState({}, '', '/settings')
+    }
+
     async function load() {
-      const { data } = await supabase.from('app_settings').select('*')
-      const items = (data || []) as AppSetting[]
+      const { data: settingsData } = await supabase.from('app_settings').select('*')
+      const items = (settingsData || []) as AppSetting[]
       setSettings(items)
       const vals: Record<string, string> = {}
-      items.forEach(s => { vals[s.key] = s.value })
+      items.forEach(s => {
+        vals[s.key] = s.value
+        if (s.key === 'last_jobber_sync') setLastJobberSync(s.value)
+      })
       setEditing(vals)
 
-      // Check which integrations have tokens
       const { data: tokens } = await supabase.from('integration_tokens').select('service')
       const status: Record<string, boolean> = {}
       ;(tokens || []).forEach((t: any) => { status[t.service] = true })
@@ -79,6 +99,7 @@ export default function SettingsPage() {
   async function saveSettings() {
     setSaving(true)
     for (const [key, value] of Object.entries(editing)) {
+      if (key === 'last_jobber_sync') continue
       await supabase.from('app_settings').update({ value }).eq('key', key)
     }
     setSaving(false)
@@ -86,15 +107,58 @@ export default function SettingsPage() {
     setTimeout(() => setSaved(false), 3000)
   }
 
+  async function syncJobber() {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/sync/jobber', { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) {
+        setSyncResult({ ok: false, message: json.error || 'Sync failed' })
+      } else {
+        const { synced, synced_at } = json
+        setLastJobberSync(synced_at)
+        setSyncResult({
+          ok: true,
+          message: `Synced ${synced.clients} clients · ${synced.jobs} jobs · ${synced.invoices} invoices${synced.errors.length ? ` · ${synced.errors.length} error(s)` : ''}`,
+        })
+      }
+    } catch (err) {
+      setSyncResult({ ok: false, message: String(err) })
+    }
+    setSyncing(false)
+  }
+
   const EDITABLE_SETTINGS = [
     { key: 'burdened_labor_rate', label: 'Burdened Labor Rate ($/hr)', type: 'number', prefix: '$', suffix: '/hr' },
-    { key: 'target_margin', label: 'Target Gross Margin', type: 'number', prefix: '', suffix: ' (0.65 = 65%)' },
-    { key: 'floor_margin', label: 'Floor Gross Margin', type: 'number', prefix: '', suffix: ' (0.50 = 50%)' },
+    { key: 'target_margin',       label: 'Target Gross Margin',        type: 'number', prefix: '',  suffix: ' (0.65 = 65%)' },
+    { key: 'floor_margin',        label: 'Floor Gross Margin',         type: 'number', prefix: '',  suffix: ' (0.50 = 50%)' },
     { key: 'employer_cost_multiplier', label: 'Employer Cost Multiplier', type: 'number', prefix: '×', suffix: '' },
   ]
 
   return (
     <div className="space-y-6 max-w-3xl">
+
+      {/* OAuth result banner */}
+      {banner && (
+        <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm ${
+          banner.type === 'success'
+            ? 'bg-brand-green/5 border-brand-green/25 text-brand-green'
+            : 'bg-accent-red/5 border-accent-red/25 text-accent-red'
+        }`}>
+          {banner.type === 'success'
+            ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+            : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+          <span>{banner.message}</span>
+          <button
+            onClick={() => setBanner(null)}
+            className="ml-auto text-current opacity-60 hover:opacity-100 transition-opacity text-xs"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Business Settings */}
       <Card>
         <CardHeader>
@@ -146,21 +210,42 @@ export default function SettingsPage() {
         <div className="divide-y divide-white/[0.04]">
           {INTEGRATIONS.map(integration => {
             const isConnected = integrationStatus[integration.id] || false
+            const isJobber = integration.id === 'jobber'
+
             return (
-              <div key={integration.id} className="flex items-center gap-4 px-4 py-4">
+              <div key={integration.id} className="flex items-start gap-4 px-4 py-4">
                 <div className="w-10 h-10 rounded-xl bg-bg-elevated border border-white/[0.06] flex items-center justify-center text-xl flex-shrink-0">
                   {integration.icon}
                 </div>
+
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-medium text-text-primary">{integration.name}</p>
                     <Badge variant={isConnected ? 'green' : 'gray'} dot>
                       {isConnected ? 'Connected' : 'Not connected'}
                     </Badge>
                   </div>
                   <p className="text-[11px] text-text-tertiary mt-0.5">{integration.description}</p>
+
+                  {/* Jobber-specific: last sync + sync result */}
+                  {isJobber && isConnected && (
+                    <div className="mt-2 space-y-1">
+                      <p className="text-[11px] text-text-tertiary font-mono">
+                        Last sync:{' '}
+                        {lastJobberSync
+                          ? `${formatDistanceToNow(new Date(lastJobberSync))} ago`
+                          : 'never'}
+                      </p>
+                      {syncResult && (
+                        <p className={`text-[11px] font-mono ${syncResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+                          {syncResult.ok ? '✓ ' : '✗ '}{syncResult.message}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+
+                <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
                   {integration.docsUrl && (
                     <a
                       href={integration.docsUrl}
@@ -171,12 +256,26 @@ export default function SettingsPage() {
                       <ExternalLink className="w-3.5 h-3.5" />
                     </a>
                   )}
+
+                  {/* Sync Now — Jobber only, when connected */}
+                  {isJobber && isConnected && integration.syncPath && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={syncing}
+                      icon={<RefreshCw className="w-3 h-3" />}
+                      onClick={syncJobber}
+                    >
+                      {syncing ? 'Syncing…' : 'Sync Now'}
+                    </Button>
+                  )}
+
                   {integration.authPath && !isConnected && (
                     <a href={integration.authPath}>
                       <Button variant="secondary" size="sm">Connect</Button>
                     </a>
                   )}
-                  {isConnected && (
+                  {isConnected && !isJobber && (
                     <Button variant="ghost" size="sm" className="text-accent-red hover:text-accent-red">
                       Disconnect
                     </Button>
@@ -231,14 +330,18 @@ export default function SettingsPage() {
         <CardContent>
           <div className="space-y-2 font-mono text-xs">
             {[
-              { key: 'App URL', value: process.env.NEXT_PUBLIC_APP_URL || 'localhost:3000' },
-              { key: 'Supabase', value: process.env.NEXT_PUBLIC_SUPABASE_URL ? '✓ Configured' : '✗ Missing' },
-              { key: 'Jobber Client', value: process.env.JOBBER_CLIENT_ID ? '✓ Configured' : '✗ Missing (server-side only)' },
-              { key: 'Google OAuth', value: process.env.GOOGLE_CLIENT_ID ? '✓ Configured' : '✗ Missing (server-side only)' },
+              { key: 'App URL',      value: process.env.NEXT_PUBLIC_APP_URL || 'localhost:3000' },
+              { key: 'Supabase',     value: process.env.NEXT_PUBLIC_SUPABASE_URL ? '✓ Configured' : '✗ Missing' },
+              { key: 'Jobber',       value: '✓ Configured (server-side)' },
+              { key: 'Google OAuth', value: '✓ Configured (server-side)' },
             ].map(({ key, value }) => (
               <div key={key} className="flex items-center justify-between py-1.5 border-b border-white/[0.04] last:border-0">
                 <span className="text-text-tertiary">{key}</span>
-                <span className={value.startsWith('✓') ? 'text-brand-green' : value.startsWith('✗') ? 'text-accent-red' : 'text-text-secondary'}>
+                <span className={
+                  value.startsWith('✓') ? 'text-brand-green'
+                  : value.startsWith('✗') ? 'text-accent-red'
+                  : 'text-text-secondary'
+                }>
                   {value}
                 </span>
               </div>
