@@ -1,19 +1,21 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
-import { RefreshCw, Bell, Search, Menu } from 'lucide-react'
+import { RefreshCw, Search, Menu } from 'lucide-react'
 import { clsx } from 'clsx'
 import { format } from 'date-fns'
+import { NotificationBell } from './NotificationBell'
 
 const PAGE_TITLES: Record<string, string> = {
-  '/':           'Dashboard',
-  '/jobs':       'Jobs & Job Costing',
-  '/clients':    'Clients & Leads',
-  '/financials': 'Financials',
-  '/team':       'Team & Crew',
-  '/supplies':   'Supply Tracker',
-  '/tasks':      'Tasks',
-  '/settings':   'Settings',
+  '/':                'Dashboard',
+  '/jobs':            'Jobs & Job Costing',
+  '/clients':         'Clients & Leads',
+  '/financials':      'Financials',
+  '/team':            'Team & Crew',
+  '/supplies':        'Supply Tracker',
+  '/tasks':           'Tasks',
+  '/settings':        'Settings',
+  '/communications':  'Communications',
 }
 
 interface HeaderProps {
@@ -52,7 +54,7 @@ export function Header({ lastSynced, onSync, syncing, onMenuToggle }: HeaderProp
         </p>
       </div>
 
-      {/* Sync status — hidden on small mobile */}
+      {/* Sync status */}
       <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-text-tertiary">
         <span className="relative flex h-1.5 w-1.5">
           <span className="absolute inline-flex h-full w-full rounded-full bg-brand-green opacity-75 animate-ping" />
@@ -73,18 +75,15 @@ export function Header({ lastSynced, onSync, syncing, onMenuToggle }: HeaderProp
         )}
       </div>
 
-      {/* Search — hidden on small mobile */}
+      {/* Search */}
       <button className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-bg-surface border border-white/[0.06] text-[12px] text-text-tertiary hover:border-white/10 hover:text-text-secondary transition-all">
         <Search className="w-3 h-3" />
         <span className="hidden md:inline">Search</span>
         <kbd className="hidden md:inline ml-1 text-[10px] bg-white/[0.06] px-1.5 py-0.5 rounded">⌘K</kbd>
       </button>
 
-      {/* Notifications */}
-      <button className="relative p-2 rounded-lg hover:bg-white/[0.05] text-text-secondary hover:text-text-primary transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center">
-        <Bell className="w-4 h-4" />
-        <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-accent-red" />
-      </button>
+      {/* Notification bell — real component */}
+      <NotificationBell />
     </header>
   )
 }

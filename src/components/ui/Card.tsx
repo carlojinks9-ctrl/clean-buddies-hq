@@ -7,11 +7,13 @@ interface CardProps {
   className?: string
   hoverable?: boolean
   onClick?: () => void
+  id?: string
 }
 
-export function Card({ children, className, hoverable, onClick }: CardProps) {
+export function Card({ children, className, hoverable, onClick, id }: CardProps) {
   return (
     <div
+      id={id}
       onClick={onClick}
       className={clsx(
         'card',

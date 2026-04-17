@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import {
   Settings, Zap, Send, Globe,
-  Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw, Copy, Radio, LogOut, Phone,
+  Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw, Copy, Radio, LogOut, Phone, Bell, BellOff,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { requestPushPermission } from '@/components/layout/PwaInit'
 
 interface AppSetting {
   key: string
@@ -89,6 +90,18 @@ export default function SettingsPage() {
   const [registeringQuoWebhook, setRegisteringQuoWebhook] = useState(false)
   const [quoWebhookResult, setQuoWebhookResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [quoWebhookStatus, setQuoWebhookStatus] = useState<{ url?: string } | null>(null)
+
+  // Notifications / Push
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | null>(null)
+  const [requestingPush, setRequestingPush] = useState(false)
+  const [pushResult, setPushResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [testingNotif, setTestingNotif] = useState(false)
+  const [carloTgUserId, setCarloTgUserId] = useState('')
+  const [jordenTgUserId, setJordenTgUserId] = useState('')
+  const [notifPrefs, setNotifPrefs] = useState({
+    tasks: true, financial: true, jobs: true, leads: true, crew: true,
+  })
+  const [savingNotifPrefs, setSavingNotifPrefs] = useState(false)
 
   useEffect(() => {
     // Handle OAuth callback query params
@@ -190,6 +203,11 @@ export default function SettingsPage() {
     load()
     fetchWebhookStatus()
     fetchQuoWebhookStatus()
+
+    // Check current push permission state
+    if ('Notification' in window) {
+      setPushPermission(Notification.permission)
+    }
   }, [])
 
   async function saveSettings() {
@@ -361,6 +379,54 @@ export default function SettingsPage() {
       setBanner({ type: 'error', message: String(err) })
     }
     setSendingDigest(false)
+  }
+
+  async function enablePushNotifications() {
+    setRequestingPush(true)
+    setPushResult(null)
+    const result = await requestPushPermission()
+    setPushResult(result)
+    if ('Notification' in window) setPushPermission(Notification.permission)
+    setRequestingPush(false)
+  }
+
+  async function sendTestNotification() {
+    setTestingNotif(true)
+    try {
+      const res = await fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: '🧹 CB HQ Test',
+          message: 'Push notifications are working correctly!',
+          priority: 'medium',
+          link: '/',
+        }),
+      })
+      const data = await res.json()
+      setBanner(data.ok
+        ? { type: 'success', message: `Test notification sent to ${data.sent} device${data.sent !== 1 ? 's' : ''}.` }
+        : { type: 'error', message: data.error || 'Test failed' }
+      )
+    } catch (err) {
+      setBanner({ type: 'error', message: String(err) })
+    }
+    setTestingNotif(false)
+  }
+
+  async function saveNotifPrefs() {
+    setSavingNotifPrefs(true)
+    await Promise.all([
+      supabase.from('app_settings').upsert({ key: 'notif_tasks', value: String(notifPrefs.tasks), description: 'Task notifications' }, { onConflict: 'key' }),
+      supabase.from('app_settings').upsert({ key: 'notif_financial', value: String(notifPrefs.financial), description: 'Financial notifications' }, { onConflict: 'key' }),
+      supabase.from('app_settings').upsert({ key: 'notif_jobs', value: String(notifPrefs.jobs), description: 'Job notifications' }, { onConflict: 'key' }),
+      supabase.from('app_settings').upsert({ key: 'notif_leads', value: String(notifPrefs.leads), description: 'Lead notifications' }, { onConflict: 'key' }),
+      supabase.from('app_settings').upsert({ key: 'notif_crew', value: String(notifPrefs.crew), description: 'Crew/operations notifications' }, { onConflict: 'key' }),
+      ...(carloTgUserId ? [supabase.from('app_settings').upsert({ key: 'telegram_carlo_user_id', value: carloTgUserId, description: "Carlo's Telegram user ID for DMs" }, { onConflict: 'key' })] : []),
+      ...(jordenTgUserId ? [supabase.from('app_settings').upsert({ key: 'telegram_jorden_user_id', value: jordenTgUserId, description: "Jorden's Telegram user ID for DMs" }, { onConflict: 'key' })] : []),
+    ])
+    setSavingNotifPrefs(false)
+    setBanner({ type: 'success', message: 'Notification preferences saved.' })
   }
 
   const EDITABLE_SETTINGS = [
@@ -788,6 +854,129 @@ Other commands:
               <li>Pin the crew message template in your crew group</li>
             </ol>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Notifications */}
+      <Card id="notifications">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Bell className="w-4 h-4 text-accent-blue" />
+            <CardTitle>Notifications</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+
+          {/* Push permissions */}
+          <div>
+            <p className="text-xs font-medium text-text-secondary mb-3 uppercase tracking-wider">Web Push Notifications</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              {pushPermission === 'granted' ? (
+                <div className="flex items-center gap-2 text-sm text-brand-green">
+                  <CheckCircle2 className="w-4 h-4" />
+                  Push notifications enabled
+                </div>
+              ) : pushPermission === 'denied' ? (
+                <div className="flex items-center gap-2 text-sm text-accent-red">
+                  <BellOff className="w-4 h-4" />
+                  Notifications blocked — enable in browser settings
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<Bell className="w-3.5 h-3.5" />}
+                  loading={requestingPush}
+                  onClick={enablePushNotifications}
+                >
+                  Enable Push Notifications
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={testingNotif}
+                onClick={sendTestNotification}
+              >
+                Send Test
+              </Button>
+            </div>
+            {pushResult && (
+              <p className={`text-xs mt-2 ${pushResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+                {pushResult.ok ? '✓ ' : '✗ '}{pushResult.message}
+              </p>
+            )}
+            {!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && (
+              <p className="text-[11px] text-accent-amber mt-2">
+                ⚠️ VAPID keys not configured — add NEXT_PUBLIC_VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL to Vercel env vars. Generate with: <code className="font-mono bg-white/[0.06] px-1 rounded">node -e "require('web-push').generateVAPIDKeys().then(console.log)"</code>
+              </p>
+            )}
+          </div>
+
+          {/* Telegram DM IDs */}
+          <div>
+            <p className="text-xs font-medium text-text-secondary mb-3 uppercase tracking-wider">Telegram DM IDs (for urgent alerts)</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] text-text-tertiary mb-1.5 uppercase tracking-wider font-medium">Carlo's User ID</label>
+                <input
+                  type="text"
+                  value={carloTgUserId}
+                  onChange={e => setCarloTgUserId(e.target.value)}
+                  placeholder="e.g. 123456789"
+                  className="w-full px-3 py-2 text-sm font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-text-tertiary mb-1.5 uppercase tracking-wider font-medium">Jorden's User ID</label>
+                <input
+                  type="text"
+                  value={jordenTgUserId}
+                  onChange={e => setJordenTgUserId(e.target.value)}
+                  placeholder="e.g. 987654321"
+                  className="w-full px-3 py-2 text-sm font-mono"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-text-tertiary mt-1.5">Get your ID by messaging @userinfobot on Telegram</p>
+          </div>
+
+          {/* Notification categories */}
+          <div>
+            <p className="text-xs font-medium text-text-secondary mb-3 uppercase tracking-wider">Notification Categories</p>
+            <div className="space-y-2">
+              {(Object.entries(notifPrefs) as Array<[keyof typeof notifPrefs, boolean]>).map(([key, enabled]) => {
+                const labels: Record<string, string> = {
+                  tasks: 'Tasks — due dates, overdue, assignments',
+                  financial: 'Financial — overdue invoices, AR alerts',
+                  jobs: 'Jobs — margin warnings, job updates',
+                  leads: 'Leads — new leads, follow-up reminders',
+                  crew: 'Crew / Operations — supplies, Telegram flags',
+                }
+                return (
+                  <div key={key} className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
+                    <span className="text-sm text-text-secondary">{labels[key]}</span>
+                    <button
+                      onClick={() => setNotifPrefs(p => ({ ...p, [key]: !p[key] }))}
+                      className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? 'bg-brand-green' : 'bg-white/10'}`}
+                    >
+                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-[11px] text-text-tertiary mt-2">Quiet hours: 9pm–7am AZ time — no urgent/high alerts during this window</p>
+          </div>
+
+          <Button
+            size="sm"
+            loading={savingNotifPrefs}
+            icon={<Save className="w-3.5 h-3.5" />}
+            onClick={saveNotifPrefs}
+          >
+            Save Notification Settings
+          </Button>
         </CardContent>
       </Card>
 
