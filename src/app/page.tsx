@@ -5,18 +5,21 @@ import { LeadPipelinePanel } from '@/components/dashboard/LeadPipelinePanel'
 import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
 import { SchedulePanel } from '@/components/dashboard/SchedulePanel'
 import { GmailWidget } from '@/components/dashboard/GmailWidget'
+import { RecentCallsWidget } from '@/components/dashboard/RecentCallsWidget'
 import { RevenueChart } from '@/components/charts/RevenueChart'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { MonoValue } from '@/components/ui/MonoValue'
-import { DollarSign, TrendingUp, CreditCard, HardHat } from 'lucide-react'
+import { DollarSign, TrendingUp, CreditCard, HardHat, PhoneMissed } from 'lucide-react'
 import { formatCents, formatMargin, grossMargin } from '@/lib/margin'
+import { startOfDay } from 'date-fns'
 import type { Job, Lead, ActivityFeedItem, Invoice } from '@/types'
 
 async function getDashboardData() {
   try {
     const db = createServerClient()
 
-    const [jobsRes, leadsRes, activityRes, invoicesRes, employeesRes] = await Promise.all([
+    const todayStart = startOfDay(new Date()).toISOString()
+    const [jobsRes, leadsRes, activityRes, invoicesRes, employeesRes, missedCallsRes] = await Promise.all([
       db
         .from('jobs')
         .select('*, client:clients(id, name, company_name)')
@@ -47,6 +50,12 @@ async function getDashboardData() {
         .from('employees')
         .select('id, status')
         .eq('status', 'active'),
+
+      db
+        .from('quo_calls')
+        .select('id', { count: 'exact', head: true })
+        .in('status', ['missed', 'no-answer', 'busy', 'voicemail'])
+        .gte('created_at', todayStart),
     ])
 
     return {
@@ -55,14 +64,15 @@ async function getDashboardData() {
       activity: (activityRes.data || []) as ActivityFeedItem[],
       invoices: (invoicesRes.data || []) as Invoice[],
       activeCrewCount: (employeesRes.data || []).length,
+      missedCallsToday: missedCallsRes.count ?? 0,
     }
   } catch {
-    return { jobs: [], leads: [], activity: [], invoices: [], activeCrewCount: 0 }
+    return { jobs: [], leads: [], activity: [], invoices: [], activeCrewCount: 0, missedCallsToday: 0 }
   }
 }
 
 export default async function DashboardPage() {
-  const { jobs, leads, activity, invoices, activeCrewCount } = await getDashboardData()
+  const { jobs, leads, activity, invoices, activeCrewCount, missedCallsToday } = await getDashboardData()
 
   // Compute KPIs
   const activeJobs = jobs.filter(j => j.status === 'active' || j.status === 'scheduled')
@@ -111,6 +121,16 @@ export default async function DashboardPage() {
           iconColor="bg-white/5"
           mono
         />
+        {missedCallsToday > 0 && (
+          <KpiCard
+            title="Missed Calls Today"
+            value={String(missedCallsToday)}
+            subvalue="needs follow-up"
+            icon={<PhoneMissed className="w-4 h-4 text-accent-red" />}
+            iconColor="bg-accent-red/10"
+            mono
+          />
+        )}
       </div>
 
       {/* Revenue Chart */}
@@ -143,6 +163,10 @@ export default async function DashboardPage() {
         <SchedulePanel />
         <GmailWidget />
         <ActivityFeed items={activity} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <RecentCallsWidget />
       </div>
 
       {/* AR Alert Banner */}

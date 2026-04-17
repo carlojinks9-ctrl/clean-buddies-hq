@@ -192,10 +192,17 @@ export async function sendDailyDigest(digest: {
   pending_supplies: Array<{ item_name: string; quantity: number; job_name: string | null }>
   overdue_invoices: Array<{ invoice_number: string; client: string; balance_cents: number; days_overdue: number }>
   new_leads: Array<{ name: string; service_type: string | null }>
+  communications?: {
+    calls_today: number
+    missed_calls: number
+    messages_today: number
+    flagged_count: number
+    top_flag: string | null
+  }
 }) {
   if (!MGMT_CHAT) return
 
-  const { jobs_active, pending_supplies, overdue_invoices, new_leads } = digest
+  const { jobs_active, pending_supplies, overdue_invoices, new_leads, communications } = digest
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 
@@ -241,6 +248,19 @@ export async function sendDailyDigest(digest: {
     text += `No new leads yesterday\n`
   } else {
     new_leads.forEach(l => { text += `• ${l.name}${l.service_type ? ` — ${l.service_type}` : ''}\n` })
+  }
+
+  // Communications section
+  if (communications) {
+    text += `\n📞 <b>Communications Today</b>\n`
+    text += `• ${communications.calls_today} call${communications.calls_today !== 1 ? 's' : ''}`
+    if (communications.missed_calls > 0) text += ` (${communications.missed_calls} missed ⚠️)`
+    text += `\n`
+    text += `• ${communications.messages_today} message${communications.messages_today !== 1 ? 's' : ''}\n`
+    if (communications.flagged_count > 0) {
+      text += `• 🚨 <b>${communications.flagged_count} flagged</b> for attention\n`
+      if (communications.top_flag) text += `  → ${communications.top_flag}\n`
+    }
   }
 
   text += `\n<a href="${appUrl}">Open Dashboard →</a>`

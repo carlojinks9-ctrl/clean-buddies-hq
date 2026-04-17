@@ -166,3 +166,56 @@ export interface ArAgingBucket {
   amount_cents: number
   count: number
 }
+
+// ── Quo (OpenPhone) types ──────────────────────────────────────────────────
+
+export interface QuoCall {
+  id: string
+  quo_id: string
+  direction: 'inbound' | 'outbound'
+  from_number: string
+  to_number: string
+  duration_seconds: number | null
+  status: string | null
+  recording_url: string | null
+  transcript: string | null
+  ai_summary: string | null
+  ai_tags: string[] | null
+  contact_name: string | null
+  phone_number_id: string | null
+  user_id: string | null
+  is_flagged: boolean
+  flag_reason: string | null
+  client_id: string | null
+  created_at: string
+}
+
+export interface QuoMessage {
+  id: string
+  quo_id: string
+  direction: 'inbound' | 'outbound'
+  from_number: string
+  to_number: string
+  body: string | null
+  contact_name: string | null
+  phone_number_id: string | null
+  user_id: string | null
+  is_flagged: boolean
+  flag_reason: string | null
+  client_id: string | null
+  created_at: string
+}
+
+export interface QuoContact {
+  id: string
+  quo_id: string | null
+  name: string
+  company: string | null
+  email: string | null
+  phone: string
+  notes: string | null
+  is_lead: boolean
+  lead_status: string | null
+  last_contact_at: string | null
+  created_at: string
+}

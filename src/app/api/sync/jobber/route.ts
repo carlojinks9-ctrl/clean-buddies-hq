@@ -30,19 +30,34 @@ export async function POST() {
 
   // ── Refresh if expired (with 60s buffer) ─────────────────────────────────
   if (tokenRow.expires_at && new Date(tokenRow.expires_at).getTime() - 60_000 < Date.now()) {
+    if (!tokenRow.refresh_token) {
+      console.error('[sync/jobber] refresh_token is NULL in integration_tokens — must reconnect')
+      return NextResponse.json({
+        error: 'Jobber token expired and no refresh token stored. Go to Settings → Disconnect Jobber → Connect again to get fresh tokens.',
+        disconnect_required: true,
+      }, { status: 400 })
+    }
+    console.log('[sync/jobber] Access token expired, refreshing...')
     try {
-      const refreshed = await refreshJobberToken(tokenRow.refresh_token!)
+      const refreshed = await refreshJobberToken(tokenRow.refresh_token)
+      console.log('[sync/jobber] Token refresh response keys:', Object.keys(refreshed))
       accessToken = refreshed.access_token
       const expiresIn = typeof (refreshed as any).expires_in === 'number' && (refreshed as any).expires_in > 0
         ? (refreshed as any).expires_in
         : 7200
       await db.from('integration_tokens').update({
         access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token,
+        refresh_token: refreshed.refresh_token ?? tokenRow.refresh_token,
         expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
       }).eq('service', 'jobber')
+      console.log('[sync/jobber] Token refreshed and saved, expires in', expiresIn, 's')
     } catch (err) {
-      return NextResponse.json({ error: 'Token refresh failed', detail: String(err) }, { status: 500 })
+      console.error('[sync/jobber] Token refresh FAILED:', String(err))
+      return NextResponse.json({
+        error: 'Token refresh failed — you may need to disconnect and reconnect Jobber in Settings.',
+        detail: String(err),
+        disconnect_required: true,
+      }, { status: 500 })
     }
   }
 

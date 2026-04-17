@@ -61,15 +61,24 @@ function homeDepotUrl(item: string) {
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  // Always return 200 so Telegram never retries — log everything
   let update: Record<string, unknown>
   try {
-    update = await request.json()
-  } catch {
-    return NextResponse.json({ ok: false }, { status: 400 })
+    const raw = await request.text()
+    console.log('[Telegram] Raw webhook body:', raw.slice(0, 2000))
+    update = JSON.parse(raw)
+  } catch (parseErr) {
+    console.error('[Telegram] Failed to parse webhook body:', parseErr)
+    return NextResponse.json({ ok: true })
   }
 
+  console.log('[Telegram] Parsed update keys:', Object.keys(update))
+
   const message = (update.message || update.channel_post) as Record<string, unknown> | undefined
-  if (!message) return NextResponse.json({ ok: true })
+  if (!message) {
+    console.log('[Telegram] No message/channel_post in update — skipping')
+    return NextResponse.json({ ok: true })
+  }
 
   const text = String(message.text || '').trim()
   const from = message.from as Record<string, unknown> | undefined
@@ -82,20 +91,37 @@ export async function POST(request: NextRequest) {
     ? `${from.first_name || ''} ${from.last_name || ''}`.trim() || String(from.username || 'Unknown')
     : 'Unknown'
 
-  const db = createServerClient()
+  console.log(`[Telegram] Message — from: ${senderName}, chat: ${chatId} (${chatType}) "${chatTitle}", text: "${text.slice(0, 200)}"`)
+
+  let db: ReturnType<typeof createServerClient>
+  try {
+    db = createServerClient()
+  } catch (err) {
+    console.error('[Telegram] createServerClient failed — SUPABASE_SERVICE_ROLE_KEY may be missing on Vercel:', err)
+    return NextResponse.json({ ok: true })
+  }
+
   const crewChatId = process.env.TELEGRAM_CREW_CHAT_ID
 
-  // ── Log group chat IDs to activity_feed so we can discover them ──────────
+  // ── Log group chat IDs to activity_feed AND app_settings so we can discover them ──────────
   if (chatType === 'group' || chatType === 'supergroup') {
     console.log(`[Telegram] Group message — chat_id: ${chatId}, title: "${chatTitle}", type: ${chatType}`)
 
-    // Only insert once per chat (upsert-style: skip if already logged recently)
-    await db.from('activity_feed').insert({
+    const { error: afErr } = await db.from('activity_feed').insert({
       event_type: 'telegram_chat_detected',
       title: `Telegram group detected: ${chatTitle}`,
       description: `chat_id: ${chatId}`,
       metadata: { chat_id: chatId, chat_title: chatTitle, chat_type: chatType, sender: senderName },
     })
+    if (afErr) console.error('[Telegram] activity_feed insert error:', afErr)
+
+    // Also persist to app_settings for reliable Settings page discovery
+    const { error: asErr } = await db.from('app_settings').upsert({
+      key: `telegram_group_${chatId}`,
+      value: chatId,
+      description: `Telegram group: ${chatTitle} (${chatType})`,
+    }, { onConflict: 'key' })
+    if (asErr) console.error('[Telegram] app_settings upsert error:', asErr)
   }
 
   // ── /help ─────────────────────────────────────────────────────────────────
@@ -125,7 +151,7 @@ export async function POST(request: NextRequest) {
 
     const hdUrl = homeDepotUrl(parsed.item)
 
-    await db.from('supply_requests').insert({
+    const { error: supplyErr } = await db.from('supply_requests').insert({
       item_name: parsed.item,
       quantity: parseInt(parsed.quantity),
       job_name: parsed.jobName || null,
@@ -135,14 +161,14 @@ export async function POST(request: NextRequest) {
       home_depot_url: hdUrl,
       telegram_message_id: String(messageId),
     })
+    if (supplyErr) console.error('[Telegram] supply_requests insert error:', supplyErr)
+    else console.log(`[Telegram] Supply request saved: ${parsed.quantity}x ${parsed.item}`)
 
-    // Confirm to the crew chat
     await replyToMessage(chatId, messageId,
       `✅ <b>Added:</b> ${parsed.quantity}x ${parsed.item}${parsed.jobName ? ` for ${parsed.jobName}` : ''}\n` +
       `Management has been notified.`
     )
 
-    // Notify management
     await notifySupplyRequest({
       item: parsed.item,
       quantity: parsed.quantity,
@@ -194,7 +220,7 @@ export async function POST(request: NextRequest) {
     } else {
       const totalCents = overdueInvoices.reduce((sum: number, inv: any) => sum + (inv.balance_cents || 0), 0)
       const today = new Date()
-      let lines = overdueInvoices.slice(0, 8).map((inv: any) => {
+      const lines = overdueInvoices.slice(0, 8).map((inv: any) => {
         const due = new Date(inv.due_date)
         const daysOverdue = Math.floor((today.getTime() - due.getTime()) / 86400000)
         const dollars = ((inv.balance_cents || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
@@ -216,6 +242,7 @@ export async function POST(request: NextRequest) {
   if (crewChatId && chatId === crewChatId && text && !text.startsWith('/')) {
     const flag = checkMessage(text)
     if (flag) {
+      console.log(`[Telegram] Flagged message — severity: ${flag.severity}, category: ${flag.category}`)
       await sendFlaggedMessage({
         original_text: text,
         sender_name: senderName,

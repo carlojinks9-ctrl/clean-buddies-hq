@@ -7,7 +7,6 @@ import { subDays, startOfDay, endOfDay } from 'date-fns'
 // Also callable manually from Settings page
 
 export async function POST(request: NextRequest) {
-  // Auth: either cron secret header or internal call
   const authHeader = request.headers.get('authorization')
   const cronSecret = process.env.CRON_SECRET
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
@@ -16,10 +15,12 @@ export async function POST(request: NextRequest) {
 
   const db = createServerClient()
   const now = new Date()
+  const todayStart = startOfDay(now).toISOString()
+  const todayEnd = endOfDay(now).toISOString()
   const yesterdayStart = startOfDay(subDays(now, 1)).toISOString()
   const yesterdayEnd = endOfDay(subDays(now, 1)).toISOString()
 
-  const [jobsRes, suppliesRes, invoicesRes, leadsRes] = await Promise.all([
+  const [jobsRes, suppliesRes, invoicesRes, leadsRes, callsTodayRes, missedTodayRes, msgsTodayRes, flaggedRes] = await Promise.all([
     db.from('jobs')
       .select('title, status, clients(name)')
       .in('status', ['active', 'scheduled']),
@@ -38,6 +39,29 @@ export async function POST(request: NextRequest) {
       .select('name, service_type')
       .gte('created_at', yesterdayStart)
       .lte('created_at', yesterdayEnd),
+
+    // Communications stats (today)
+    db.from('quo_calls')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', todayStart)
+      .lte('created_at', todayEnd),
+
+    db.from('quo_calls')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['missed', 'no-answer', 'busy', 'voicemail'])
+      .gte('created_at', todayStart)
+      .lte('created_at', todayEnd),
+
+    db.from('quo_messages')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', todayStart)
+      .lte('created_at', todayEnd),
+
+    db.from('quo_calls')
+      .select('flag_reason')
+      .eq('is_flagged', true)
+      .order('created_at', { ascending: false })
+      .limit(1),
   ])
 
   const today = new Date()
@@ -69,7 +93,22 @@ export async function POST(request: NextRequest) {
     service_type: l.service_type,
   }))
 
-  await sendDailyDigest({ jobs_active, pending_supplies, overdue_invoices, new_leads })
+  const communications = {
+    calls_today: callsTodayRes.count ?? 0,
+    missed_calls: missedTodayRes.count ?? 0,
+    messages_today: msgsTodayRes.count ?? 0,
+    flagged_count: 0, // handled separately in sendDailyDigest
+    top_flag: (flaggedRes.data?.[0] as any)?.flag_reason ?? null,
+  }
+
+  // Count total flagged
+  const [flaggedCallsRes, flaggedMsgsRes] = await Promise.all([
+    db.from('quo_calls').select('id', { count: 'exact', head: true }).eq('is_flagged', true),
+    db.from('quo_messages').select('id', { count: 'exact', head: true }).eq('is_flagged', true),
+  ])
+  communications.flagged_count = (flaggedCallsRes.count ?? 0) + (flaggedMsgsRes.count ?? 0)
+
+  await sendDailyDigest({ jobs_active, pending_supplies, overdue_invoices, new_leads, communications })
 
   return NextResponse.json({
     ok: true,
@@ -79,6 +118,9 @@ export async function POST(request: NextRequest) {
       supplies: pending_supplies.length,
       invoices: overdue_invoices.length,
       leads: new_leads.length,
+      calls_today: communications.calls_today,
+      missed_calls: communications.missed_calls,
+      flagged: communications.flagged_count,
     },
   })
 }

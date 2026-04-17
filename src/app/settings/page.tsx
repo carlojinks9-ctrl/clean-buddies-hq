@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import {
   Settings, Zap, Send, Globe,
-  Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw, Copy, Radio,
+  Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw, Copy, Radio, LogOut, Phone,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
@@ -66,6 +66,7 @@ export default function SettingsPage() {
   const [lastGoogleSync, setLastGoogleSync] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncingIntegration, setSyncingIntegration] = useState<string | null>(null)
+  const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [syncResults, setSyncResults] = useState<Record<string, { ok: boolean; message: string }>>({})
 
@@ -80,6 +81,14 @@ export default function SettingsPage() {
   const [registeringWebhook, setRegisteringWebhook] = useState(false)
   const [webhookResult, setWebhookResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [sendingDigest, setSendingDigest] = useState(false)
+
+  // Quo
+  const [lastQuoSync, setLastQuoSync] = useState<string | null>(null)
+  const [syncingQuo, setSyncingQuo] = useState(false)
+  const [quoSyncResult, setQuoSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [registeringQuoWebhook, setRegisteringQuoWebhook] = useState(false)
+  const [quoWebhookResult, setQuoWebhookResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [quoWebhookStatus, setQuoWebhookStatus] = useState<{ url?: string } | null>(null)
 
   useEffect(() => {
     // Handle OAuth callback query params
@@ -114,6 +123,7 @@ export default function SettingsPage() {
         if (s.key === 'last_jobber_sync') setLastJobberSync(s.value)
         if (s.key === 'last_qbo_sync') setLastQboSync(s.value)
         if (s.key === 'last_google_sync') setLastGoogleSync(s.value)
+        if (s.key === 'last_quo_sync') setLastQuoSync(s.value)
       })
       setEditing(vals)
 
@@ -167,8 +177,19 @@ export default function SettingsPage() {
       } catch { /* no-op */ }
     }
 
+    async function fetchQuoWebhookStatus() {
+      try {
+        const res = await fetch('/api/quo/setup')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.webhooks?.[0]) setQuoWebhookStatus({ url: data.webhooks[0].url })
+        }
+      } catch { /* no-op */ }
+    }
+
     load()
     fetchWebhookStatus()
+    fetchQuoWebhookStatus()
   }, [])
 
   async function saveSettings() {
@@ -189,7 +210,10 @@ export default function SettingsPage() {
       const res = await fetch('/api/sync/jobber', { method: 'POST' })
       const json = await res.json()
       if (!res.ok) {
-        setSyncResult({ ok: false, message: json.error || 'Sync failed' })
+        const msg = json.disconnect_required
+          ? `${json.error} — Use the Disconnect button to reset.`
+          : (json.error || 'Sync failed')
+        setSyncResult({ ok: false, message: msg })
       } else {
         const { synced, synced_at } = json
         setLastJobberSync(synced_at)
@@ -262,6 +286,65 @@ export default function SettingsPage() {
       setWebhookResult({ ok: false, message: String(err) })
     }
     setRegisteringWebhook(false)
+  }
+
+  async function disconnectIntegration(service: string) {
+    if (!confirm(`Disconnect ${service}? You'll need to reconnect to sync data.`)) return
+    setDisconnecting(service)
+    try {
+      const res = await fetch('/api/integrations/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setIntegrationStatus(prev => ({ ...prev, [service]: false }))
+        setBanner({ type: 'success', message: `${service} disconnected. Reconnect when ready.` })
+      } else {
+        setBanner({ type: 'error', message: data.error || 'Disconnect failed' })
+      }
+    } catch (err) {
+      setBanner({ type: 'error', message: String(err) })
+    }
+    setDisconnecting(null)
+  }
+
+  async function syncQuo() {
+    setSyncingQuo(true)
+    setQuoSyncResult(null)
+    try {
+      const res = await fetch('/api/sync/quo', { method: 'POST' })
+      const json = await res.json()
+      if (json.success) {
+        const { synced, synced_at } = json
+        setLastQuoSync(synced_at)
+        setQuoSyncResult({ ok: true, message: `Synced ${synced.calls} calls · ${synced.messages} messages · ${synced.flagged} flagged` })
+      } else {
+        setQuoSyncResult({ ok: false, message: json.error || 'Sync failed' })
+      }
+    } catch (err) {
+      setQuoSyncResult({ ok: false, message: String(err) })
+    }
+    setSyncingQuo(false)
+  }
+
+  async function registerQuoWebhook() {
+    setRegisteringQuoWebhook(true)
+    setQuoWebhookResult(null)
+    try {
+      const res = await fetch('/api/quo/setup', { method: 'POST' })
+      const data = await res.json()
+      if (data.ok) {
+        setQuoWebhookStatus({ url: data.webhook_url })
+        setQuoWebhookResult({ ok: true, message: `Webhook registered: ${data.webhook_url}` })
+      } else {
+        setQuoWebhookResult({ ok: false, message: data.error || 'Registration failed' })
+      }
+    } catch (err) {
+      setQuoWebhookResult({ ok: false, message: String(err) })
+    }
+    setRegisteringQuoWebhook(false)
   }
 
   async function sendDigestNow() {
@@ -436,6 +519,19 @@ export default function SettingsPage() {
                     </Button>
                   )}
 
+                  {isConnected && integration.authPath && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      loading={disconnecting === integration.id}
+                      icon={<LogOut className="w-3 h-3" />}
+                      onClick={() => disconnectIntegration(integration.id)}
+                      className="text-accent-red/60 hover:text-accent-red"
+                    >
+                      {disconnecting === integration.id ? 'Disconnecting…' : 'Disconnect'}
+                    </Button>
+                  )}
+
                   {integration.authPath && !isConnected && (
                     <a href={integration.authPath}>
                       <Button variant="secondary" size="sm">Connect</Button>
@@ -446,6 +542,88 @@ export default function SettingsPage() {
             )
           })}
         </div>
+      </Card>
+
+      {/* Quo (OpenPhone) */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Phone className="w-4 h-4 text-text-tertiary" />
+            <CardTitle>Quo / OpenPhone</CardTitle>
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-brand-green/10 text-brand-green font-medium">
+              {process.env.NEXT_PUBLIC_APP_URL ? 'API key configured' : 'API key configured (server-side)'}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+
+          {/* Sync */}
+          <div>
+            <p className="text-xs font-medium text-text-secondary mb-2">Data Sync</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <p className="text-[11px] font-mono text-text-tertiary">
+                Last sync: {lastQuoSync ? `${formatDistanceToNow(new Date(lastQuoSync))} ago` : 'never'}
+              </p>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={syncingQuo}
+                icon={<RefreshCw className="w-3.5 h-3.5" />}
+                onClick={syncQuo}
+              >
+                {syncingQuo ? 'Syncing…' : 'Sync Now'}
+              </Button>
+              <a href="/communications" className="text-[11px] text-accent-blue hover:underline">
+                View Communications →
+              </a>
+            </div>
+            {quoSyncResult && (
+              <p className={`text-[11px] mt-1.5 font-mono ${quoSyncResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+                {quoSyncResult.ok ? '✓ ' : '✗ '}{quoSyncResult.message}
+              </p>
+            )}
+          </div>
+
+          {/* Webhook */}
+          <div>
+            <p className="text-xs font-medium text-text-secondary mb-2">Webhook (real-time events)</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex-1 min-w-0 p-2.5 rounded-lg bg-bg-elevated border border-white/[0.06] font-mono text-[11px]">
+                {quoWebhookStatus?.url
+                  ? <span className="text-brand-green">{quoWebhookStatus.url}</span>
+                  : <span className="text-text-tertiary">Not registered</span>
+                }
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={registeringQuoWebhook}
+                icon={<Radio className="w-3.5 h-3.5" />}
+                onClick={registerQuoWebhook}
+              >
+                {registeringQuoWebhook ? 'Registering…' : 'Register Webhook'}
+              </Button>
+            </div>
+            {quoWebhookResult && (
+              <p className={`text-[11px] mt-1.5 font-mono ${quoWebhookResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+                {quoWebhookResult.ok ? '✓ ' : '✗ '}{quoWebhookResult.message}
+              </p>
+            )}
+            <p className="text-[10px] text-text-tertiary mt-2">
+              Events: call.completed · call.summary.completed · message.received · message.sent
+            </p>
+          </div>
+
+          <div className="p-3 rounded-lg bg-bg-elevated border border-white/[0.06] text-xs text-text-secondary space-y-1">
+            <p className="font-medium text-text-primary">Setup</p>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>Add <code className="font-mono text-accent-blue">QUO_API_KEY</code> and <code className="font-mono text-accent-blue">ANTHROPIC_API_KEY</code> to Vercel env vars</li>
+              <li>Click <b>Register Webhook</b> to set up real-time events</li>
+              <li>Click <b>Sync Now</b> to pull existing call history</li>
+              <li>AI flagging activates automatically when <code className="font-mono">ANTHROPIC_API_KEY</code> is set</li>
+            </ol>
+          </div>
+        </CardContent>
       </Card>
 
       {/* Telegram Bot Config */}

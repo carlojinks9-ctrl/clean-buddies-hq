@@ -352,3 +352,8 @@ INSERT INTO app_settings (key, value, description) VALUES
   ('floor_margin', '0.50', 'Absolute floor gross margin (decimal)'),
   ('employer_cost_multiplier', '1.10', 'Employer cost burden multiplier for SS/Medicare/FUTA/AZ SUI')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+
+-- ─────────────────────────────────────────────
+-- QUO (OPENPHONE) — run migrations/002_quo_tables.sql
+-- or paste those CREATE TABLE statements here
+-- ─────────────────────────────────────────────

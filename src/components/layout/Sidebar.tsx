@@ -16,17 +16,19 @@ import {
   Zap,
   LogOut,
   X,
+  Phone,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
-  { href: '/',           label: 'Dashboard',  icon: LayoutDashboard },
-  { href: '/jobs',       label: 'Jobs',       icon: Briefcase },
-  { href: '/clients',    label: 'Clients',    icon: Users },
-  { href: '/financials', label: 'Financials', icon: DollarSign },
-  { href: '/team',       label: 'Team',       icon: HardHat },
-  { href: '/supplies',   label: 'Supplies',   icon: ShoppingCart },
-  { href: '/tasks',      label: 'Tasks',      icon: CheckSquare },
-  { href: '/settings',   label: 'Settings',   icon: Settings },
+  { href: '/',                label: 'Dashboard',      icon: LayoutDashboard },
+  { href: '/jobs',            label: 'Jobs',           icon: Briefcase },
+  { href: '/clients',         label: 'Clients',        icon: Users },
+  { href: '/communications',  label: 'Communications', icon: Phone },
+  { href: '/financials',      label: 'Financials',     icon: DollarSign },
+  { href: '/team',            label: 'Team',           icon: HardHat },
+  { href: '/supplies',        label: 'Supplies',       icon: ShoppingCart },
+  { href: '/tasks',           label: 'Tasks',          icon: CheckSquare },
+  { href: '/settings',        label: 'Settings',       icon: Settings },
 ]
 
 interface SidebarProps {
