@@ -10,14 +10,14 @@
   "categories": ["business", "productivity"],
   "icons": [
     {
-      "src": "/api/icon/192",
-      "sizes": "192x192",
+      "src": "/icons/apple-touch-icon.png",
+      "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/api/icon/192",
-      "sizes": "192x192",
+      "src": "/icons/apple-touch-icon.png",
+      "sizes": "180x180",
       "type": "image/png",
       "purpose": "maskable"
     },
