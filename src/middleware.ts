@@ -13,10 +13,19 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet: Array<{ name: string; value: string; options?: Record<string, unknown> }>) {
+        setAll(cookiesToSet, headers) {
+          // Must update request cookies AND recreate response so refreshed tokens propagate
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+          supabaseResponse = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options as any)
           )
+          // Apply cache-control headers so CDNs don't cache auth responses
+          if (headers) {
+            Object.entries(headers).forEach(([key, value]) =>
+              supabaseResponse.headers.set(key, value)
+            )
+          }
         },
       },
     }
