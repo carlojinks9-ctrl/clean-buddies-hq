@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { toast } from '@/components/ui/Toast'
 import {
   CheckSquare, Plus, AlertCircle, Clock, CheckCircle2,
-  Circle, Trash2, GripVertical, ChevronDown, ChevronUp,
+  Circle, Trash2, GripVertical, ChevronDown, ChevronUp, ListPlus, X,
 } from 'lucide-react'
 import { format, isToday, isPast, parseISO } from 'date-fns'
 import type { Task } from '@/types'
@@ -42,6 +42,53 @@ const EMPTY_FORM = {
   assignee: 'carlo', due_date: '',
 }
 
+// ── Bulk parse helpers ────────────────────────────────────────────────────────
+
+type ParsedTask = {
+  title: string
+  assignee: 'carlo' | 'jorden' | 'both'
+  status: 'todo' | 'done'
+  category: Task['category']
+  priority: Task['priority']
+}
+
+function detectCategory(title: string): Task['category'] {
+  const t = title.toLowerCase()
+  if (/hir(e|ing)|recruit|interview|onboard/.test(t)) return 'hiring'
+  if (/tax|finance|qbo|quickbook|invoice|payroll|account|p&l|ar |revenue|billing/.test(t)) return 'finance'
+  if (/website|seo|ads|lead|pitch|bid|quote|market|sales|client|proposal|crm/.test(t)) return 'sales'
+  if (/admin|email|call|meeting|license|permit|insur|contract|docu/.test(t)) return 'admin'
+  return 'operations'
+}
+
+function parseBulkText(raw: string): ParsedTask[] {
+  return raw
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      // Detect done status from ✅
+      const done = line.includes('✅')
+      let text = line.replace(/✅/g, '').trim()
+
+      // Detect assignee from (Carlo), (Jorden), (Both) — case insensitive
+      let assignee: ParsedTask['assignee'] = 'carlo'
+      text = text.replace(/\((carlo|jorden|both)\)/gi, (_, a) => {
+        assignee = a.toLowerCase() as ParsedTask['assignee']
+        return ''
+      }).trim()
+
+      return {
+        title: text,
+        assignee,
+        status: (done ? 'done' : 'todo') as ParsedTask['status'],
+        category: detectCategory(text),
+        priority: 'medium' as ParsedTask['priority'],
+      }
+    })
+    .filter(t => t.title.length > 0)
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 export default function TasksPage() {
@@ -53,6 +100,11 @@ export default function TasksPage() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [showDone, setShowDone] = useState(false)
+  // Bulk add state
+  const [showBulk, setShowBulk] = useState(false)
+  const [bulkText, setBulkText] = useState('')
+  const [bulkParsed, setBulkParsed] = useState<ParsedTask[]>([])
+  const [bulkSaving, setBulkSaving] = useState(false)
   // Drag state
   const dragId = useRef<string | null>(null)
   const dragOverCol = useRef<Task['status'] | null>(null)
@@ -186,6 +238,36 @@ export default function TasksPage() {
     } else {
       toast('Task deleted')
     }
+  }
+
+  // ── Bulk save ─────────────────────────────────────────────────────────────
+
+  async function saveBulkTasks() {
+    if (bulkParsed.length === 0) return
+    setBulkSaving(true)
+
+    const rows = bulkParsed.map(t => ({
+      title: t.title,
+      category: t.category,
+      priority: t.priority,
+      status: t.status,
+      assignee: t.assignee,
+      description: null,
+      due_date: null,
+    }))
+
+    const { data, error } = await supabase.from('tasks').insert(rows).select()
+
+    if (error) {
+      toast(`Bulk save failed: ${error.message}`, 'error')
+    } else {
+      setTasks(prev => [...(data as Task[]), ...prev])
+      toast(`${rows.length} task${rows.length !== 1 ? 's' : ''} added`)
+      setShowBulk(false)
+      setBulkText('')
+      setBulkParsed([])
+    }
+    setBulkSaving(false)
   }
 
   // ── Drag and drop ─────────────────────────────────────────────────────────
@@ -442,6 +524,14 @@ export default function TasksPage() {
             {openCount} open · {doneTasks.length} done
           </span>
           <Button
+            variant="ghost"
+            size="sm"
+            icon={<ListPlus className="w-3.5 h-3.5" />}
+            onClick={() => { setShowBulk(true); setBulkText(''); setBulkParsed([]) }}
+          >
+            Bulk Add
+          </Button>
+          <Button
             size="sm"
             icon={<Plus className="w-3.5 h-3.5" />}
             onClick={() => { setShowForm(true); setForm(EMPTY_FORM) }}
@@ -554,8 +644,163 @@ export default function TasksPage() {
         </div>
       )}
 
+      {/* Bulk Add Modal */}
+      {showBulk && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-2xl border border-white/[0.08] bg-[#12121A] shadow-2xl flex flex-col max-h-[90vh]">
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
+              <div className="flex items-center gap-2">
+                <ListPlus className="w-4 h-4 text-brand-green" />
+                <h2 className="text-sm font-semibold text-text-primary">Bulk Add Tasks</h2>
+              </div>
+              <button
+                onClick={() => setShowBulk(false)}
+                className="p-1 rounded-lg hover:bg-white/[0.06] text-text-tertiary hover:text-text-primary transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* Textarea */}
+              <div>
+                <label className="block text-[11px] text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">
+                  Paste tasks — one per line
+                </label>
+                <textarea
+                  autoFocus
+                  rows={6}
+                  value={bulkText}
+                  onChange={e => {
+                    setBulkText(e.target.value)
+                    setBulkParsed(parseBulkText(e.target.value))
+                  }}
+                  placeholder={'Run new permits (Jorden)\nFix website meta descriptions (Carlo)\nTaxes (both)\nBuy WFP (Jorden)✅'}
+                  className="w-full px-3 py-2 text-sm font-mono resize-none"
+                />
+                <p className="text-[10px] text-text-tertiary mt-1.5">
+                  Use <code className="bg-white/5 px-1 rounded">(Carlo)</code>, <code className="bg-white/5 px-1 rounded">(Jorden)</code>, <code className="bg-white/5 px-1 rounded">(Both)</code> to assign · <code className="bg-white/5 px-1 rounded">✅</code> to mark done
+                </p>
+              </div>
+
+              {/* Preview table */}
+              {bulkParsed.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[11px] text-text-tertiary font-medium uppercase tracking-wider">
+                      Preview — {bulkParsed.length} task{bulkParsed.length !== 1 ? 's' : ''}
+                    </p>
+                    <p className="text-[10px] text-text-tertiary">Click cells to edit</p>
+                  </div>
+                  <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-white/[0.06] bg-white/[0.02]">
+                          <th className="text-left px-3 py-2 text-text-tertiary font-medium w-[45%]">Task</th>
+                          <th className="text-left px-3 py-2 text-text-tertiary font-medium w-[18%]">Assignee</th>
+                          <th className="text-left px-3 py-2 text-text-tertiary font-medium w-[18%]">Category</th>
+                          <th className="text-left px-3 py-2 text-text-tertiary font-medium w-[14%]">Status</th>
+                          <th className="px-3 py-2 w-[5%]" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bulkParsed.map((t, i) => (
+                          <tr key={i} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
+                            {/* Title */}
+                            <td className="px-3 py-2">
+                              <input
+                                value={t.title}
+                                onChange={e => setBulkParsed(prev => prev.map((p, j) => j === i ? { ...p, title: e.target.value } : p))}
+                                className="w-full bg-transparent text-text-primary focus:outline-none focus:bg-white/[0.04] rounded px-1 -mx-1 py-0.5"
+                              />
+                            </td>
+                            {/* Assignee */}
+                            <td className="px-3 py-2">
+                              <select
+                                value={t.assignee}
+                                onChange={e => setBulkParsed(prev => prev.map((p, j) => j === i ? { ...p, assignee: e.target.value as ParsedTask['assignee'] } : p))}
+                                className={clsx(
+                                  'bg-transparent text-[11px] font-medium capitalize focus:outline-none cursor-pointer',
+                                  t.assignee === 'carlo'  ? 'text-brand-green' :
+                                  t.assignee === 'jorden' ? 'text-accent-blue' : 'text-accent-amber'
+                                )}
+                              >
+                                <option value="carlo">Carlo</option>
+                                <option value="jorden">Jorden</option>
+                                <option value="both">Both</option>
+                              </select>
+                            </td>
+                            {/* Category */}
+                            <td className="px-3 py-2">
+                              <select
+                                value={t.category}
+                                onChange={e => setBulkParsed(prev => prev.map((p, j) => j === i ? { ...p, category: e.target.value as Task['category'] } : p))}
+                                className="bg-transparent text-text-secondary text-[11px] capitalize focus:outline-none cursor-pointer"
+                              >
+                                {['sales', 'operations', 'admin', 'hiring', 'finance'].map(c => (
+                                  <option key={c} value={c}>{c}</option>
+                                ))}
+                              </select>
+                            </td>
+                            {/* Status */}
+                            <td className="px-3 py-2">
+                              <button
+                                onClick={() => setBulkParsed(prev => prev.map((p, j) => j === i ? { ...p, status: p.status === 'done' ? 'todo' : 'done' } : p))}
+                                className={clsx(
+                                  'text-[11px] font-medium flex items-center gap-1 transition-colors',
+                                  t.status === 'done' ? 'text-brand-green' : 'text-text-tertiary hover:text-text-secondary'
+                                )}
+                              >
+                                {t.status === 'done'
+                                  ? <><CheckCircle2 className="w-3 h-3" /> done</>
+                                  : <><Circle className="w-3 h-3" /> todo</>
+                                }
+                              </button>
+                            </td>
+                            {/* Remove row */}
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                onClick={() => setBulkParsed(prev => prev.filter((_, j) => j !== i))}
+                                className="text-text-tertiary hover:text-accent-red transition-colors"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-5 py-4 border-t border-white/[0.06]">
+              <span className="text-[11px] text-text-tertiary">
+                {bulkParsed.length > 0 ? `${bulkParsed.length} task${bulkParsed.length !== 1 ? 's' : ''} ready to save` : 'Paste tasks above to preview'}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setShowBulk(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  loading={bulkSaving}
+                  disabled={bulkParsed.length === 0}
+                  onClick={saveBulkTasks}
+                >
+                  Save All
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Kanban board */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {COLUMNS.filter(c => c.key !== 'done').map(col => (
           <KanbanColumn key={col.key} col={col} />
         ))}
@@ -585,7 +830,7 @@ export default function TasksPage() {
               onDragOver={e => onDragOver(e, 'done')}
               onDrop={e => onDrop(e, 'done')}
             >
-              <div className="p-3 grid grid-cols-3 gap-2">
+              <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {loading ? (
                   Array.from({ length: 3 }).map((_, i) => (
                     <div key={i} className="rounded-xl border border-white/[0.06] bg-bg-elevated p-3">

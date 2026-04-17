@@ -26,7 +26,7 @@ export default async function TeamPage() {
   return (
     <div className="space-y-5">
       {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="card p-4">
           <p className="text-[11px] text-text-tertiary uppercase tracking-wider mb-1">Active Team Members</p>
           <p className="text-2xl font-bold font-mono">{active.length}</p>
@@ -49,7 +49,50 @@ export default async function TeamPage() {
           <HardHat className="w-4 h-4 text-text-tertiary" />
           <h2 className="text-sm font-semibold">Team Roster</h2>
         </div>
-        <div className="overflow-x-auto">
+        {/* Mobile card list */}
+        <div className="md:hidden divide-y divide-white/[0.04]">
+          {employees.map(emp => (
+            <div key={emp.id} className="p-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center text-[11px] font-bold text-text-primary flex-shrink-0">
+                    {emp.name.charAt(0)}
+                  </div>
+                  <div>
+                    <p className="font-medium text-text-primary">{emp.name}</p>
+                    <p className="text-[11px] text-text-tertiary capitalize">{emp.role}</p>
+                  </div>
+                </div>
+                <Badge variant={emp.status === 'active' ? 'green' : emp.status === 'on_leave' ? 'amber' : 'gray'} dot>
+                  {emp.status === 'on_leave' ? 'On Leave' : emp.status}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-4 flex-wrap text-sm">
+                <div>
+                  <p className="text-[10px] text-text-tertiary">Base</p>
+                  <span className="font-mono text-text-secondary">${(emp.base_rate_cents / 100).toFixed(2)}/hr</span>
+                </div>
+                <div>
+                  <p className="text-[10px] text-text-tertiary">Burdened</p>
+                  <span className="font-mono text-accent-amber">${(emp.burdened_rate_cents / 100).toFixed(2)}/hr</span>
+                </div>
+                {emp.is_driver && (
+                  <span className="flex items-center gap-1 text-brand-green text-xs">
+                    <Car className="w-3 h-3" /> Driver
+                  </span>
+                )}
+                {emp.hire_date && (
+                  <span className="text-[11px] text-text-tertiary font-mono ml-auto">
+                    {format(new Date(emp.hire_date), 'MMM d, yyyy')}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Desktop table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>

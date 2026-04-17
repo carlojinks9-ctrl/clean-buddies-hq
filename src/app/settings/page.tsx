@@ -5,8 +5,8 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import {
-  Settings, Zap, Calendar, Receipt, Send, Globe,
-  Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw,
+  Settings, Zap, Send, Globe,
+  Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw, Copy, Radio,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
@@ -65,6 +65,16 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  // Telegram
+  const [tgCrewId, setTgCrewId] = useState('')
+  const [tgMgmtId, setTgMgmtId] = useState('')
+  const [tgSaving, setTgSaving] = useState(false)
+  const [tgSaved, setTgSaved] = useState(false)
+  const [detectedChats, setDetectedChats] = useState<Array<{ chat_id: string; chat_title: string; chat_type: string; ts: string }>>([])
+  const [webhookStatus, setWebhookStatus] = useState<{ url?: string; has_custom_certificate?: boolean; pending_update_count?: number } | null>(null)
+  const [registeringWebhook, setRegisteringWebhook] = useState(false)
+  const [webhookResult, setWebhookResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [sendingDigest, setSendingDigest] = useState(false)
 
   useEffect(() => {
     // Handle OAuth callback query params
@@ -92,8 +102,54 @@ export default function SettingsPage() {
       const status: Record<string, boolean> = {}
       ;(tokens || []).forEach((t: any) => { status[t.service] = true })
       setIntegrationStatus(status)
+
+      // Telegram chat IDs from app_settings
+      const crewSetting = items.find(s => s.key === 'telegram_crew_chat_id')
+      const mgmtSetting = items.find(s => s.key === 'telegram_management_chat_id')
+      if (crewSetting) setTgCrewId(crewSetting.value)
+      if (mgmtSetting) setTgMgmtId(mgmtSetting.value)
+
+      // Detected chats from activity_feed
+      const { data: chatEvents } = await supabase
+        .from('activity_feed')
+        .select('metadata, created_at')
+        .eq('event_type', 'telegram_chat_detected')
+        .order('created_at', { ascending: false })
+        .limit(20)
+
+      if (chatEvents) {
+        // Deduplicate by chat_id, keep most recent
+        const seen = new Set<string>()
+        const unique: typeof detectedChats = []
+        for (const ev of chatEvents) {
+          const meta = ev.metadata as any
+          if (meta?.chat_id && !seen.has(meta.chat_id)) {
+            seen.add(meta.chat_id)
+            unique.push({
+              chat_id: meta.chat_id,
+              chat_title: meta.chat_title || 'Unknown',
+              chat_type: meta.chat_type || '',
+              ts: ev.created_at,
+            })
+          }
+        }
+        setDetectedChats(unique)
+      }
     }
+
+    // Fetch current webhook status
+    async function fetchWebhookStatus() {
+      try {
+        const res = await fetch('/api/telegram/setup')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.webhook_info) setWebhookStatus(data.webhook_info)
+        }
+      } catch { /* no-op */ }
+    }
+
     load()
+    fetchWebhookStatus()
   }, [])
 
   async function saveSettings() {
@@ -127,6 +183,57 @@ export default function SettingsPage() {
       setSyncResult({ ok: false, message: String(err) })
     }
     setSyncing(false)
+  }
+
+  async function saveTelegramIds() {
+    setTgSaving(true)
+    await Promise.all([
+      supabase.from('app_settings').upsert(
+        { key: 'telegram_crew_chat_id', value: tgCrewId, description: 'Telegram crew group chat ID' },
+        { onConflict: 'key' }
+      ),
+      supabase.from('app_settings').upsert(
+        { key: 'telegram_management_chat_id', value: tgMgmtId, description: 'Telegram management chat ID' },
+        { onConflict: 'key' }
+      ),
+    ])
+    setTgSaving(false)
+    setTgSaved(true)
+    setTimeout(() => setTgSaved(false), 3000)
+  }
+
+  async function registerWebhook() {
+    setRegisteringWebhook(true)
+    setWebhookResult(null)
+    try {
+      const res = await fetch('/api/telegram/setup', { method: 'POST' })
+      const data = await res.json()
+      if (data.ok) {
+        setWebhookStatus(data.webhook_info)
+        setWebhookResult({ ok: true, message: `Webhook registered: ${data.webhook_url}` })
+      } else {
+        setWebhookResult({ ok: false, message: data.error || 'Registration failed' })
+      }
+    } catch (err) {
+      setWebhookResult({ ok: false, message: String(err) })
+    }
+    setRegisteringWebhook(false)
+  }
+
+  async function sendDigestNow() {
+    setSendingDigest(true)
+    try {
+      const res = await fetch('/api/telegram/digest', { method: 'POST' })
+      const data = await res.json()
+      if (data.ok) {
+        setBanner({ type: 'success', message: `Daily digest sent to management chat.` })
+      } else {
+        setBanner({ type: 'error', message: data.error || 'Digest failed' })
+      }
+    } catch (err) {
+      setBanner({ type: 'error', message: String(err) })
+    }
+    setSendingDigest(false)
   }
 
   const EDITABLE_SETTINGS = [
@@ -292,29 +399,162 @@ export default function SettingsPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <Send className="w-4 h-4 text-text-tertiary" />
-            <CardTitle>Telegram Bot Setup</CardTitle>
+            <CardTitle>Telegram Bot</CardTitle>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="p-3 rounded-lg bg-bg-elevated border border-white/[0.06] text-xs text-text-secondary space-y-1.5">
-            <p className="font-medium text-text-primary">Setup Steps:</p>
-            <ol className="list-decimal list-inside space-y-1 text-text-secondary">
-              <li>Add <code className="bg-white/10 px-1 rounded font-mono">@CBAssistantBot</code> to your crew Telegram group</li>
-              <li>Copy the Group Chat ID and paste below</li>
-              <li>Do the same for the Management private group</li>
-              <li>Set the webhook URL: <code className="bg-white/10 px-1 rounded font-mono text-[10px]">/api/telegram/webhook</code></li>
-            </ol>
+        <CardContent className="space-y-5">
+
+          {/* Webhook status + register */}
+          <div>
+            <p className="text-xs font-medium text-text-secondary mb-2">Webhook</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex-1 min-w-0 p-2.5 rounded-lg bg-bg-elevated border border-white/[0.06] font-mono text-[11px]">
+                {webhookStatus?.url
+                  ? <span className="text-brand-green">{webhookStatus.url}</span>
+                  : <span className="text-text-tertiary">Not registered</span>
+                }
+                {webhookStatus?.pending_update_count != null && webhookStatus.pending_update_count > 0 && (
+                  <span className="ml-2 text-accent-amber">({webhookStatus.pending_update_count} pending)</span>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={registeringWebhook}
+                icon={<Radio className="w-3.5 h-3.5" />}
+                onClick={registerWebhook}
+              >
+                {registeringWebhook ? 'Registering…' : 'Register Webhook'}
+              </Button>
+            </div>
+            {webhookResult && (
+              <p className={`text-[11px] mt-1.5 font-mono ${webhookResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+                {webhookResult.ok ? '✓ ' : '✗ '}{webhookResult.message}
+              </p>
+            )}
           </div>
+
+          {/* Chat IDs */}
           <div className="space-y-3">
+            <p className="text-xs font-medium text-text-secondary">Chat IDs</p>
             <div>
-              <label className="block text-xs text-text-secondary mb-1.5">Crew Chat ID</label>
-              <input className="w-full px-3 py-2 text-sm font-mono" placeholder="-1001234567890" />
+              <label className="block text-[11px] text-text-tertiary mb-1.5 uppercase tracking-wider font-medium">Crew Chat ID</label>
+              <input
+                value={tgCrewId}
+                onChange={e => setTgCrewId(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono"
+                placeholder="-1001234567890"
+              />
             </div>
             <div>
-              <label className="block text-xs text-text-secondary mb-1.5">Management Chat ID</label>
-              <input className="w-full px-3 py-2 text-sm font-mono" placeholder="-1009876543210" />
+              <label className="block text-[11px] text-text-tertiary mb-1.5 uppercase tracking-wider font-medium">Management Chat ID</label>
+              <input
+                value={tgMgmtId}
+                onChange={e => setTgMgmtId(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono"
+                placeholder="-1009876543210"
+              />
             </div>
-            <Button size="sm" icon={<Save className="w-3.5 h-3.5" />}>Save Chat IDs</Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                loading={tgSaving}
+                icon={tgSaved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+                onClick={saveTelegramIds}
+              >
+                {tgSaved ? 'Saved!' : 'Save Chat IDs'}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={sendingDigest}
+                onClick={sendDigestNow}
+              >
+                Send Digest Now
+              </Button>
+            </div>
+          </div>
+
+          {/* Detected chats from activity_feed */}
+          {detectedChats.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-text-secondary mb-2">Detected Groups</p>
+              <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/[0.06] bg-white/[0.02]">
+                      <th className="text-left px-3 py-2 text-text-tertiary font-medium">Group Name</th>
+                      <th className="text-left px-3 py-2 text-text-tertiary font-medium">Chat ID</th>
+                      <th className="text-left px-3 py-2 text-text-tertiary font-medium">Type</th>
+                      <th className="px-3 py-2 w-8" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detectedChats.map(chat => (
+                      <tr key={chat.chat_id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02]">
+                        <td className="px-3 py-2 text-text-primary">{chat.chat_title}</td>
+                        <td className="px-3 py-2 font-mono text-text-secondary">{chat.chat_id}</td>
+                        <td className="px-3 py-2 text-text-tertiary capitalize">{chat.chat_type}</td>
+                        <td className="px-3 py-2">
+                          <button
+                            onClick={() => navigator.clipboard.writeText(chat.chat_id)}
+                            className="p-1 rounded hover:bg-white/[0.08] text-text-tertiary hover:text-text-primary transition-colors"
+                            title="Copy chat ID"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-text-tertiary mt-1.5">
+                The bot logs every group it receives a message in. Click <Copy className="w-2.5 h-2.5 inline" /> to copy, then paste into the fields above.
+              </p>
+            </div>
+          )}
+
+          {/* Crew pinned message template */}
+          <div>
+            <p className="text-xs font-medium text-text-secondary mb-2">Crew Pinned Message</p>
+            <div className="relative rounded-xl border border-white/[0.06] bg-bg-elevated p-3">
+              <pre className="text-[11px] text-text-secondary whitespace-pre-wrap font-mono leading-relaxed">
+{`📦 SUPPLY REQUESTS — To request supplies, type:
+
+/supply [item] [quantity] [job name]
+
+Example: /supply trash bags 2 Lanai Living
+
+The bot will log it and notify management.
+
+Other commands:
+/status — Today's snapshot
+/ar — Outstanding invoices
+/help — All commands`}
+              </pre>
+              <button
+                onClick={() => navigator.clipboard.writeText(
+                  `📦 SUPPLY REQUESTS — To request supplies, type:\n\n/supply [item] [quantity] [job name]\n\nExample: /supply trash bags 2 Lanai Living\n\nThe bot will log it and notify management.\n\nOther commands:\n/status — Today's snapshot\n/ar — Outstanding invoices\n/help — All commands`
+                )}
+                className="absolute top-2 right-2 p-1.5 rounded-lg hover:bg-white/[0.08] text-text-tertiary hover:text-text-primary transition-colors"
+                title="Copy to clipboard"
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Setup instructions */}
+          <div className="p-3 rounded-lg bg-bg-elevated border border-white/[0.06] text-xs text-text-secondary space-y-1.5">
+            <p className="font-medium text-text-primary">Setup Steps</p>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>Add the bot to your crew group and management group</li>
+              <li>Send any message in each group — chat IDs will appear in "Detected Groups" above</li>
+              <li>Copy each ID into the fields above and click Save</li>
+              <li>Click <b>Register Webhook</b> to point Telegram at your Vercel URL</li>
+              <li>Pin the crew message template in your crew group</li>
+            </ol>
           </div>
         </CardContent>
       </Card>

@@ -69,7 +69,7 @@ export default function SuppliesPage() {
   return (
     <div className="space-y-5">
       {/* Summary */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="card p-4">
           <p className="text-[11px] text-text-tertiary uppercase tracking-wider mb-1">Pending Orders</p>
           <p className="text-2xl font-bold font-mono">{pendingCount}</p>
@@ -108,8 +108,8 @@ export default function SuppliesPage() {
       {/* Add Form */}
       {showForm && (
         <Card className="p-4">
-          <form onSubmit={addItem} className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
+          <form onSubmit={addItem} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="col-span-1 sm:col-span-2 md:col-span-2">
               <label className="block text-[11px] text-text-tertiary mb-1">Item *</label>
               <input required value={form.item_name} onChange={e => setForm(p => ({...p, item_name: e.target.value}))} className="w-full px-3 py-2 text-sm" placeholder="Item description" />
             </div>
@@ -135,7 +135,7 @@ export default function SuppliesPage() {
                 {['low','medium','high'].map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
-            <div className="col-span-3 flex gap-2 justify-end">
+            <div className="col-span-1 sm:col-span-2 md:col-span-3 flex gap-2 justify-end">
               <Button variant="ghost" size="sm" type="button" onClick={() => setShowForm(false)}>Cancel</Button>
               <Button size="sm" loading={submitting} type="submit">Save</Button>
             </div>
@@ -149,7 +149,41 @@ export default function SuppliesPage() {
           <ShoppingCart className="w-4 h-4 text-text-tertiary" />
           <h2 className="text-sm font-semibold">Supply Requests</h2>
         </div>
-        <div className="overflow-x-auto">
+        {/* Mobile card list */}
+        <div className="md:hidden divide-y divide-white/[0.04]">
+          {loading ? (
+            Array.from({length: 4}).map((_,i) => <div key={i} className="p-4"><Skeleton lines={2} /></div>)
+          ) : filtered.map(item => {
+            const meta = statusMeta[item.status]
+            return (
+              <div key={item.id} className="p-4">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div>
+                    <p className="font-medium text-text-primary">{item.item_name}</p>
+                    <p className="text-[11px] text-text-tertiary">x{item.quantity}{item.unit ? ` ${item.unit}` : ''}{item.job_name ? ` · ${item.job_name}` : ''}</p>
+                  </div>
+                  <Badge variant={meta.variant}>{meta.label}</Badge>
+                </div>
+                <div className="flex items-center gap-4 flex-wrap">
+                  {item.requested_by && <span className="text-[11px] text-text-secondary">{item.requested_by}</span>}
+                  <span className={`text-[11px] font-medium capitalize ${priorityMeta[item.priority]}`}>{item.priority}</span>
+                  {item.estimated_cost_cents && <MonoValue cents={item.estimated_cost_cents} size="sm" showCents />}
+                  <div className="ml-auto flex items-center gap-2">
+                    {item.status === 'pending' && (
+                      <button onClick={() => updateStatus(item.id, 'ordered')} className="text-[10px] px-2 py-1 rounded bg-accent-blue/10 text-accent-blue hover:bg-accent-blue/20 transition-colors min-h-[32px]">Mark Ordered</button>
+                    )}
+                    {item.status === 'ordered' && (
+                      <button onClick={() => updateStatus(item.id, 'received')} className="text-[10px] px-2 py-1 rounded bg-brand-green/10 text-brand-green hover:bg-brand-green/20 transition-colors min-h-[32px]">Mark Received</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Desktop table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>

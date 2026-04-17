@@ -41,7 +41,7 @@ export default async function JobsPage() {
   return (
     <div className="space-y-5">
       {/* Summary row */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="card p-4">
           <p className="text-[11px] text-text-tertiary uppercase tracking-wider mb-1">Total Contract Value</p>
           <MonoValue cents={totalRevenue} size="xl" />
@@ -60,7 +60,7 @@ export default async function JobsPage() {
         </div>
       </div>
 
-      {/* Jobs table */}
+      {/* Jobs list */}
       <Card>
         <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-primary">All Jobs</h2>
@@ -71,7 +71,57 @@ export default async function JobsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile card list */}
+        <div className="md:hidden divide-y divide-white/[0.04]">
+          {jobs.length === 0 ? (
+            <p className="p-6 text-sm text-text-tertiary text-center">No jobs yet.</p>
+          ) : jobs.map(job => {
+            const meta = statusMeta[job.status]
+            return (
+              <Link key={job.id} href={`/jobs/${job.id}`} className="block p-4 hover:bg-white/[0.02] transition-colors active:bg-white/[0.04]">
+                <div className="flex items-start justify-between gap-2 mb-3">
+                  <div className="min-w-0">
+                    <p className="font-medium text-text-primary truncate">{job.title}</p>
+                    <p className="text-[11px] text-text-tertiary mt-0.5">
+                      {(job.client as any)?.company_name || (job.client as any)?.name || '—'}
+                      {job.job_number && ` · ${job.job_number}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <StatusDot status={job.status as any} pulse={job.status === 'active'} />
+                    <Badge variant={meta.variant}>{meta.label}</Badge>
+                  </div>
+                </div>
+                <div className="flex items-center gap-6">
+                  <div>
+                    <p className="text-[10px] text-text-tertiary mb-0.5">Contract</p>
+                    <MonoValue cents={job.contract_value_cents} size="sm" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-text-tertiary mb-0.5">Labor</p>
+                    <MonoValue cents={job.burdened_labor_cents} size="sm" color="text-text-secondary" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-text-tertiary mb-0.5">Margin</p>
+                    <MarginBadge margin={job.gross_margin} />
+                  </div>
+                  {job.start_date && (
+                    <div className="ml-auto">
+                      <p className="text-[10px] text-text-tertiary mb-0.5">Date</p>
+                      <span className="text-[11px] text-text-tertiary font-mono">
+                        {format(new Date(job.start_date), 'MMM d')}
+                        {job.end_date ? ` → ${format(new Date(job.end_date), 'MMM d')}` : ''}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </Link>
+            )
+          })}
+        </div>
+
+        {/* Desktop table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>

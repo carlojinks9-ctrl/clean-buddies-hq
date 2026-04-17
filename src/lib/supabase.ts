@@ -1,11 +1,12 @@
+import { createBrowserClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-// Client-side Supabase client (uses anon key)
-// Untyped to avoid strict insert/upsert inference friction — add Database<T> when schema stabilizes.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Client-side Supabase client — uses @supabase/ssr so session is stored in cookies
+// (required for middleware to read auth state during SSR)
+export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey)
 
 // Server-side Supabase client (uses service role key — NEVER expose to client)
 export function createServerClient() {

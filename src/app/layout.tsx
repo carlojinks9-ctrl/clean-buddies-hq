@@ -1,8 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import { Sidebar } from '@/components/layout/Sidebar'
-import { Header } from '@/components/layout/Header'
-import { ToastContainer } from '@/components/ui/Toast'
+import { LayoutShell } from '@/components/layout/LayoutShell'
 
 export const metadata: Metadata = {
   title: 'Clean Buddies HQ',
@@ -22,14 +20,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="bg-bg-base text-text-primary antialiased">
-        <Sidebar />
-        <div className="ml-[220px] min-h-screen flex flex-col">
-          <Header />
-          <main className="flex-1 p-6">
-            {children}
-          </main>
-        </div>
-        <ToastContainer />
+        <LayoutShell>
+          {children}
+        </LayoutShell>
       </body>
     </html>
   )

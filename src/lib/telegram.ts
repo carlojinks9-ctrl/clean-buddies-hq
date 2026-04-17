@@ -149,3 +149,100 @@ ${summary.count} new request${summary.count !== 1 ? 's' : ''} today — estimate
 
   await sendMessage(MGMT_CHAT, text)
 }
+
+export async function replyToMessage(chatId: string, messageId: number, text: string) {
+  const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      reply_to_message_id: messageId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    console.error('Telegram reply failed:', err)
+  }
+}
+
+export async function notifySupplyRequest(supply: {
+  item: string
+  quantity: string
+  job_name: string
+  requested_by: string
+  home_depot_url: string
+}) {
+  if (!MGMT_CHAT) return
+  const text = `🛒 <b>New Supply Request</b>
+
+From: <b>${supply.requested_by}</b>
+Item: <b>${supply.quantity}x ${supply.item}</b>${supply.job_name ? `\nJob: ${supply.job_name}` : ''}
+
+🔗 <a href="${supply.home_depot_url}">Search Home Depot →</a>
+<a href="${process.env.NEXT_PUBLIC_APP_URL}/supplies">View All Requests →</a>`
+
+  await sendMessage(MGMT_CHAT, text)
+}
+
+export async function sendDailyDigest(digest: {
+  jobs_active: Array<{ title: string; client: string }>
+  pending_supplies: Array<{ item_name: string; quantity: number; job_name: string | null }>
+  overdue_invoices: Array<{ invoice_number: string; client: string; balance_cents: number; days_overdue: number }>
+  new_leads: Array<{ name: string; service_type: string | null }>
+}) {
+  if (!MGMT_CHAT) return
+
+  const { jobs_active, pending_supplies, overdue_invoices, new_leads } = digest
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+
+  let text = `🌅 <b>Good Morning — CB Daily Digest</b>\n<i>${today}</i>\n\n`
+
+  // Active / scheduled jobs
+  text += `📋 <b>Active Jobs (${jobs_active.length})</b>\n`
+  if (jobs_active.length === 0) {
+    text += `No active jobs\n`
+  } else {
+    jobs_active.slice(0, 6).forEach(j => { text += `• ${j.title}${j.client ? ` — ${j.client}` : ''}\n` })
+    if (jobs_active.length > 6) text += `• ...and ${jobs_active.length - 6} more\n`
+  }
+
+  // Pending supplies
+  text += `\n🛒 <b>Pending Supplies (${pending_supplies.length})</b>\n`
+  if (pending_supplies.length === 0) {
+    text += `No pending supply requests\n`
+  } else {
+    pending_supplies.slice(0, 5).forEach(s => {
+      text += `• ${s.quantity}x ${s.item_name}${s.job_name ? ` (${s.job_name})` : ''}\n`
+    })
+    if (pending_supplies.length > 5) text += `• ...and ${pending_supplies.length - 5} more\n`
+  }
+
+  // Overdue invoices
+  text += `\n💸 <b>Overdue Invoices (${overdue_invoices.length})</b>\n`
+  if (overdue_invoices.length === 0) {
+    text += `No overdue invoices ✓\n`
+  } else {
+    let totalCents = 0
+    overdue_invoices.slice(0, 5).forEach(inv => {
+      totalCents += inv.balance_cents
+      const dollars = (inv.balance_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+      text += `• #${inv.invoice_number} ${inv.client} — ${dollars} (${inv.days_overdue}d)\n`
+    })
+    text += `Total: <b>${(totalCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}</b>\n`
+  }
+
+  // New leads from yesterday
+  text += `\n🟢 <b>New Leads Yesterday (${new_leads.length})</b>\n`
+  if (new_leads.length === 0) {
+    text += `No new leads yesterday\n`
+  } else {
+    new_leads.forEach(l => { text += `• ${l.name}${l.service_type ? ` — ${l.service_type}` : ''}\n` })
+  }
+
+  text += `\n<a href="${appUrl}">Open Dashboard →</a>`
+  await sendMessage(MGMT_CHAT, text)
+}
