@@ -11,7 +11,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { MonoValue } from '@/components/ui/MonoValue'
 import { DollarSign, TrendingUp, CreditCard, HardHat, PhoneMissed } from 'lucide-react'
 import { formatCents, formatMargin, grossMargin } from '@/lib/margin'
-import { startOfDay } from 'date-fns'
+import { startOfDay, format } from 'date-fns'
 import type { Job, Lead, ActivityFeedItem, Invoice } from '@/types'
 
 async function getDashboardData() {
@@ -19,7 +19,12 @@ async function getDashboardData() {
     const db = createServerClient()
 
     const todayStart = startOfDay(new Date()).toISOString()
-    const [jobsRes, leadsRes, activityRes, invoicesRes, employeesRes, missedCallsRes] = await Promise.all([
+    // Last 6 months for revenue trend
+    const sixMonthsAgo = new Date()
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
+    const sixMonthsAgoDate = sixMonthsAgo.toISOString().split('T')[0]
+
+    const [jobsRes, leadsRes, activityRes, invoicesRes, employeesRes, missedCallsRes, revenueHistoryRes] = await Promise.all([
       db
         .from('jobs')
         .select('*, client:clients(id, name, company_name)')
@@ -56,7 +61,32 @@ async function getDashboardData() {
         .select('id', { count: 'exact', head: true })
         .in('status', ['missed', 'no-answer', 'busy', 'voicemail'])
         .gte('created_at', todayStart),
+
+      // Jobs with real Jobber data for revenue trend (excludes pure seed data that has no jobber_id)
+      db
+        .from('jobs')
+        .select('contract_value_cents, start_date, jobber_id')
+        .not('start_date', 'is', null)
+        .gte('start_date', sixMonthsAgoDate)
+        .not('jobber_id', 'is', null),
     ])
+
+    // Compute real monthly revenue chart data from synced jobs
+    let revenueChartData: Array<{ month: string; revenue: number }> | undefined
+    const revenueJobs = revenueHistoryRes.data || []
+    if (revenueJobs.length > 0) {
+      const monthMap = new Map<string, number>()
+      for (const j of revenueJobs) {
+        if (j.start_date) {
+          // Format as "Jan", "Feb", etc.
+          const monthKey = format(new Date(j.start_date + 'T00:00:00'), 'MMM')
+          monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + (j.contract_value_cents || 0))
+        }
+      }
+      if (monthMap.size >= 2) {
+        revenueChartData = Array.from(monthMap.entries()).map(([month, revenue]) => ({ month, revenue }))
+      }
+    }
 
     return {
       jobs: (jobsRes.data || []) as Job[],
@@ -65,14 +95,15 @@ async function getDashboardData() {
       invoices: (invoicesRes.data || []) as Invoice[],
       activeCrewCount: (employeesRes.data || []).length,
       missedCallsToday: missedCallsRes.count ?? 0,
+      revenueChartData,
     }
   } catch {
-    return { jobs: [], leads: [], activity: [], invoices: [], activeCrewCount: 0, missedCallsToday: 0 }
+    return { jobs: [], leads: [], activity: [], invoices: [], activeCrewCount: 0, missedCallsToday: 0, revenueChartData: undefined }
   }
 }
 
 export default async function DashboardPage() {
-  const { jobs, leads, activity, invoices, activeCrewCount, missedCallsToday } = await getDashboardData()
+  const { jobs, leads, activity, invoices, activeCrewCount, missedCallsToday, revenueChartData } = await getDashboardData()
 
   // Compute KPIs
   const activeJobs = jobs.filter(j => j.status === 'active' || j.status === 'scheduled')
@@ -89,7 +120,7 @@ export default async function DashboardPage() {
         <KpiCard
           title="Monthly Revenue"
           value={formatCents(monthlyRevenue)}
-          subvalue="Apr 2026"
+          subvalue={format(new Date(), 'MMM yyyy')}
           change={13.1}
           icon={<DollarSign className="w-4 h-4 text-brand-green" />}
           iconColor="bg-brand-green/10"
@@ -149,7 +180,7 @@ export default async function DashboardPage() {
           </div>
         </CardHeader>
         <CardContent className="pt-2">
-          <RevenueChart />
+          <RevenueChart data={revenueChartData} />
         </CardContent>
       </Card>
 

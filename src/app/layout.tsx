@@ -7,8 +7,13 @@ export const metadata: Metadata = {
   title: 'Clean Buddies HQ',
   description: 'Operations command center for Clean Buddies LLC',
   icons: {
-    icon: '/icons/icon-192.svg',
-    apple: '/icons/icon-192.svg',
+    icon: [
+      { url: '/api/icon/32', sizes: '32x32', type: 'image/png' },
+      { url: '/api/icon/192', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/api/icon/180', sizes: '180x180', type: 'image/png' },
+    ],
   },
   manifest: '/manifest.json',
 }
@@ -31,7 +36,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="CB HQ" />
         <meta name="mobile-web-app-capable" content="yes" />
-        <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
+        {/* PNG apple-touch-icon required by iOS Safari — SVG is ignored */}
+        <link rel="apple-touch-icon" sizes="180x180" href="/api/icon/180" />
+        <link rel="apple-touch-icon" sizes="152x152" href="/api/icon/152" />
+        <link rel="apple-touch-icon" sizes="120x120" href="/api/icon/120" />
       </head>
       <body className="bg-bg-base text-text-primary antialiased">
         <PwaInit />

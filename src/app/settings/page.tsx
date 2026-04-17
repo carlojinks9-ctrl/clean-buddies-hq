@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -7,9 +7,33 @@ import { Badge } from '@/components/ui/Badge'
 import {
   Settings, Zap, Send, Globe,
   Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw, Copy, Radio, LogOut, Phone, Bell, BellOff,
+  Database, ShieldAlert,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { requestPushPermission } from '@/components/layout/PwaInit'
+
+interface HealthStatus {
+  integrations: {
+    jobber: {
+      connected: boolean
+      token_expired: boolean | null
+      expires_at: string | null
+      connected_at: string | null
+      last_sync: string | null
+      reconnect_required: boolean
+      last_error: string | null
+      env_ok: boolean
+    }
+    quo: { api_key_set: boolean; last_sync: string | null }
+    google: { connected: boolean; last_sync: string | null; env_ok: boolean }
+    telegram: { token_set: boolean; mgmt_chat_configured: boolean; last_digest: string | null }
+  }
+  records: {
+    clients: number; jobs: number; invoices: number; leads: number
+    quo_calls: number; quo_messages: number; employees: number; tasks: number; supply_requests: number
+  }
+  env: Record<string, boolean>
+}
 
 interface AppSetting {
   key: string
@@ -70,6 +94,9 @@ export default function SettingsPage() {
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [syncResults, setSyncResults] = useState<Record<string, { ok: boolean; message: string }>>({})
+
+  const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null)
+  const [loadingHealth, setLoadingHealth] = useState(true)
 
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   // Telegram
@@ -208,6 +235,13 @@ export default function SettingsPage() {
     if ('Notification' in window) {
       setPushPermission(Notification.permission)
     }
+
+    // Load integration health status
+    fetch('/api/health')
+      .then(r => r.json())
+      .then((data: HealthStatus) => setHealthStatus(data))
+      .catch(() => {})
+      .finally(() => setLoadingHealth(false))
   }, [])
 
   async function saveSettings() {
@@ -229,9 +263,12 @@ export default function SettingsPage() {
       const json = await res.json()
       if (!res.ok) {
         const msg = json.disconnect_required
-          ? `${json.error} — Use the Disconnect button to reset.`
+          ? json.error || 'Token refresh failed — disconnect and reconnect Jobber in Settings.'
           : (json.error || 'Sync failed')
         setSyncResult({ ok: false, message: msg })
+        if (json.disconnect_required) {
+          setBanner({ type: 'error', message: '⚠️ Jobber reconnection required — use the Disconnect button then Connect again.' })
+        }
       } else {
         const { synced, synced_at } = json
         setLastJobberSync(synced_at)
@@ -244,6 +281,8 @@ export default function SettingsPage() {
       setSyncResult({ ok: false, message: String(err) })
     }
     setSyncing(false)
+    // Refresh health status after sync attempt
+    fetch('/api/health').then(r => r.json()).then(setHealthStatus).catch(() => {})
   }
 
   async function syncIntegration(id: string, path: string) {
@@ -508,7 +547,41 @@ export default function SettingsPage() {
           </div>
         </CardHeader>
         <div className="divide-y divide-white/[0.04]">
-          {INTEGRATIONS.map(integration => {
+          {/* Jobber reconnect-required banner — persists across page loads */}
+        {healthStatus && healthStatus.integrations.jobber.reconnect_required && (
+          <div className="mx-4 my-2 flex items-start gap-3 px-4 py-3 rounded-xl bg-accent-red/5 border border-accent-red/25">
+            <ShieldAlert className="w-4 h-4 text-accent-red flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-accent-red">Jobber reconnection required</p>
+              <p className="text-xs text-accent-red/70 mt-0.5">
+                {healthStatus.integrations.jobber.last_error
+                  ? healthStatus.integrations.jobber.last_error.replace('JOBBER_UNAUTHORIZED: ', '')
+                  : 'Token expired or revoked. Use Disconnect → Connect to get fresh tokens.'}
+              </p>
+            </div>
+            <a href="/api/jobber/authorize">
+              <Button size="sm" variant="secondary" className="border-accent-red/30 text-accent-red hover:text-accent-red">
+                Reconnect →
+              </Button>
+            </a>
+          </div>
+        )}
+
+        {/* Jobber expired-but-not-yet-flagged warning */}
+        {healthStatus && !healthStatus.integrations.jobber.reconnect_required
+          && healthStatus.integrations.jobber.token_expired === true && (
+          <div className="mx-4 my-2 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-accent-amber/5 border border-accent-amber/25">
+            <AlertCircle className="w-4 h-4 text-accent-amber flex-shrink-0" />
+            <p className="text-xs text-accent-amber flex-1">
+              Jobber token may be expired — try <strong>Sync Now</strong> to refresh it automatically, or reconnect if sync fails.
+            </p>
+            <a href="/api/jobber/authorize">
+              <Button size="sm" variant="secondary">Reconnect</Button>
+            </a>
+          </div>
+        )}
+
+        {INTEGRATIONS.map(integration => {
             const isConnected = integrationStatus[integration.id] || false
             const isJobber = integration.id === 'jobber'
             const isGenericSync = !isJobber && isConnected && integration.syncPath
@@ -980,33 +1053,125 @@ Other commands:
         </CardContent>
       </Card>
 
+      {/* Data Records — counts from DB */}
+      {healthStatus && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-text-tertiary" />
+              <CardTitle>Data Records</CardTitle>
+            </div>
+            <button
+              onClick={() => {
+                setLoadingHealth(true)
+                fetch('/api/health').then(r => r.json()).then(setHealthStatus).catch(() => {}).finally(() => setLoadingHealth(false))
+              }}
+              className="text-[11px] text-accent-blue hover:underline flex items-center gap-1"
+            >
+              <RefreshCw className={`w-3 h-3 ${loadingHealth ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 mb-4">
+              {([
+                { label: 'Clients', count: healthStatus.records.clients, color: 'text-brand-green', href: '/clients' },
+                { label: 'Jobs', count: healthStatus.records.jobs, color: 'text-accent-blue', href: '/jobs' },
+                { label: 'Invoices', count: healthStatus.records.invoices, color: 'text-accent-amber', href: '/financials' },
+                { label: 'Leads', count: healthStatus.records.leads, color: 'text-text-primary', href: '/clients' },
+                { label: 'Quo Calls', count: healthStatus.records.quo_calls, color: 'text-accent-blue', href: '/communications' },
+                { label: 'Quo Msgs', count: healthStatus.records.quo_messages, color: 'text-text-secondary', href: '/communications' },
+                { label: 'Employees', count: healthStatus.records.employees, color: 'text-text-secondary', href: '/team' },
+                { label: 'Tasks', count: healthStatus.records.tasks, color: 'text-accent-amber', href: '/tasks' },
+              ] as Array<{ label: string; count: number; color: string; href: string }>).map(({ label, count, color, href }) => (
+                <a key={label} href={href} className="p-3 rounded-xl bg-bg-elevated border border-white/[0.06] text-center hover:border-white/[0.12] transition-colors">
+                  <p className={`text-xl font-mono font-bold ${color}`}>{count}</p>
+                  <p className="text-[10px] text-text-tertiary mt-0.5">{label}</p>
+                </a>
+              ))}
+            </div>
+            <p className="text-[10px] text-text-tertiary">
+              Includes seed/demo data. Counts update after sync.
+              {healthStatus.records.clients <= 10 && healthStatus.records.jobs <= 10 && (
+                <span className="text-accent-amber ml-1">— Showing seed data only. Connect Jobber and sync to see real records.</span>
+              )}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Environment info */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-text-tertiary" />
-            <CardTitle>Environment</CardTitle>
+            <CardTitle>Environment & API Keys</CardTitle>
           </div>
         </CardHeader>
         <CardContent>
           <div className="space-y-2 font-mono text-xs">
-            {[
-              { key: 'App URL',      value: process.env.NEXT_PUBLIC_APP_URL || 'localhost:3000' },
-              { key: 'Supabase',     value: process.env.NEXT_PUBLIC_SUPABASE_URL ? '✓ Configured' : '✗ Missing' },
-              { key: 'Jobber',       value: '✓ Configured (server-side)' },
-              { key: 'Google OAuth', value: '✓ Configured (server-side)' },
-            ].map(({ key, value }) => (
+            {([
+              { key: 'App URL', value: process.env.NEXT_PUBLIC_APP_URL || 'localhost:3000', isUrl: true },
+              { key: 'Supabase', value: process.env.NEXT_PUBLIC_SUPABASE_URL ? true : false },
+              { key: 'JOBBER_CLIENT_ID', value: healthStatus?.env.JOBBER_CLIENT_ID },
+              { key: 'JOBBER_CLIENT_SECRET', value: healthStatus?.env.JOBBER_CLIENT_SECRET },
+              { key: 'QUO_API_KEY', value: healthStatus?.env.QUO_API_KEY },
+              { key: 'TELEGRAM_BOT_TOKEN', value: healthStatus?.env.TELEGRAM_BOT_TOKEN },
+              { key: 'GOOGLE_CLIENT_ID', value: healthStatus?.env.GOOGLE_CLIENT_ID },
+              { key: 'GOOGLE_CLIENT_SECRET', value: healthStatus?.env.GOOGLE_CLIENT_SECRET },
+              { key: 'VAPID_PRIVATE_KEY', value: healthStatus?.env.VAPID_PRIVATE_KEY },
+              { key: 'NEXT_PUBLIC_VAPID_PUBLIC_KEY', value: healthStatus?.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY },
+              { key: 'ANTHROPIC_API_KEY', value: healthStatus?.env.ANTHROPIC_API_KEY },
+            ] as Array<{ key: string; value: boolean | string | undefined; isUrl?: boolean }>).map(({ key, value, isUrl }) => (
               <div key={key} className="flex items-center justify-between py-1.5 border-b border-white/[0.04] last:border-0">
                 <span className="text-text-tertiary">{key}</span>
                 <span className={
-                  value.startsWith('✓') ? 'text-brand-green'
-                  : value.startsWith('✗') ? 'text-accent-red'
+                  isUrl ? 'text-text-secondary'
+                  : value === true ? 'text-brand-green'
+                  : value === false ? 'text-accent-red'
+                  : value === undefined ? 'text-text-tertiary'
                   : 'text-text-secondary'
                 }>
-                  {value}
+                  {isUrl ? String(value) : value === true ? '✓ Set' : value === false ? '✗ Missing' : '…'}
                 </span>
               </div>
             ))}
+          </div>
+          <p className="text-[10px] text-text-tertiary mt-3">
+            Missing keys must be added in Vercel → Project → Settings → Environment Variables, then redeploy.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* PWA / iOS Install Instructions */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-text-tertiary" />
+            <CardTitle>Install as App</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-3 rounded-xl bg-bg-elevated border border-white/[0.06] space-y-2">
+              <p className="text-xs font-semibold text-text-primary">Android (Chrome)</p>
+              <ol className="text-[11px] text-text-secondary space-y-1 list-decimal list-inside">
+                <li>Open this app in Chrome</li>
+                <li>Tap the ⋮ menu (top right)</li>
+                <li>Tap <strong>Add to Home screen</strong></li>
+                <li>Confirm — app installs with CB icon</li>
+              </ol>
+            </div>
+            <div className="p-3 rounded-xl bg-bg-elevated border border-white/[0.06] space-y-2">
+              <p className="text-xs font-semibold text-text-primary">iPhone (Safari required)</p>
+              <ol className="text-[11px] text-text-secondary space-y-1 list-decimal list-inside">
+                <li>Open this app in <strong>Safari</strong> (not Chrome)</li>
+                <li>Tap the Share icon <span className="font-mono">⬆</span> at the bottom</li>
+                <li>Scroll down and tap <strong>Add to Home Screen</strong></li>
+                <li>Tap <strong>Add</strong> — CB HQ appears on your home screen</li>
+              </ol>
+              <p className="text-[10px] text-accent-amber">iOS does not show install banners — manual steps required</p>
+            </div>
           </div>
         </CardContent>
       </Card>

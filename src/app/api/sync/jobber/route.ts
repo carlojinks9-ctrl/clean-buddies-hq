@@ -51,17 +51,58 @@ export async function POST() {
         expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
       }).eq('service', 'jobber')
       console.log('[sync/jobber] Token refreshed and saved, expires in', expiresIn, 's')
+      // Clear any stored reconnect flag since refresh succeeded
+      await db.from('app_settings').upsert(
+        { key: 'jobber_reconnect_required', value: 'false', description: 'Jobber reconnect required flag' },
+        { onConflict: 'key' }
+      )
     } catch (err) {
-      console.error('[sync/jobber] Token refresh FAILED:', String(err))
+      const detail = String(err)
+      console.error('[sync/jobber] Token refresh FAILED:', detail)
+      // Persist the reconnect-required state so Settings page shows it even after reload
+      try {
+        await db.from('app_settings').upsert(
+          { key: 'jobber_reconnect_required', value: 'true', description: 'Jobber reconnect required flag' },
+          { onConflict: 'key' }
+        )
+        await db.from('app_settings').upsert(
+          { key: 'jobber_last_error', value: detail.slice(0, 500), description: 'Last Jobber sync error' },
+          { onConflict: 'key' }
+        )
+      } catch { /* non-fatal */ }
       return NextResponse.json({
-        error: 'Token refresh failed — you may need to disconnect and reconnect Jobber in Settings.',
-        detail: String(err),
+        error: 'Token refresh failed — disconnect and reconnect Jobber in Settings → Integrations.',
+        detail,
         disconnect_required: true,
       }, { status: 500 })
     }
   }
 
   const results = { clients: 0, jobs: 0, invoices: 0, errors: [] as string[] }
+
+  // Helper: detect auth failures in caught errors and return a reconnect response
+  async function checkForAuthError(err: unknown, section: string): Promise<NextResponse | null> {
+    const msg = String(err)
+    if (msg.includes('JOBBER_UNAUTHORIZED')) {
+      console.error(`[sync/jobber] Auth error in ${section}:`, msg)
+      try {
+        await db.from('app_settings').upsert(
+          { key: 'jobber_reconnect_required', value: 'true', description: 'Jobber reconnect required' },
+          { onConflict: 'key' }
+        )
+        await db.from('app_settings').upsert(
+          { key: 'jobber_last_error', value: msg.slice(0, 500), description: 'Last Jobber sync error' },
+          { onConflict: 'key' }
+        )
+      } catch { /* non-fatal */ }
+      return NextResponse.json({
+        error: 'Jobber token rejected — disconnect and reconnect in Settings → Integrations.',
+        detail: msg,
+        disconnect_required: true,
+      }, { status: 401 })
+    }
+    return null
+  }
 
   // ── Sync clients ─────────────────────────────────────────────────────────
   try {
@@ -90,6 +131,8 @@ export async function POST() {
       }
     } while (cursor)
   } catch (err) {
+    const authResp = await checkForAuthError(err, 'clients')
+    if (authResp) return authResp
     console.error('[sync/jobber] Clients error:', err)
     results.errors.push(`Clients: ${err}`)
   }
@@ -130,14 +173,17 @@ export async function POST() {
             burdened_labor_cents: laborCents,
             total_hours: totalHours,
             gross_margin: margin,
-            start_date: j.startAt || j.createdAt || null,
-            end_date: j.endAt || null,
+            // startAt / completedAt are now in the query
+            start_date: j.startAt ? j.startAt.split('T')[0] : (j.createdAt ? j.createdAt.split('T')[0] : null),
+            end_date: j.completedAt ? j.completedAt.split('T')[0] : null,
           }, { onConflict: 'jobber_id' })
           if (!error) results.jobs++
         }
       }
     } while (cursor)
   } catch (err) {
+    const authResp = await checkForAuthError(err, 'jobs')
+    if (authResp) return authResp
     console.error('[sync/jobber] Jobs error:', err)
     results.errors.push(`Jobs: ${err}`)
   }
@@ -177,7 +223,7 @@ export async function POST() {
         if (client) {
           const { error } = await db.from('invoices').upsert({
             jobber_id: inv.id,
-            invoice_number: inv.invoiceNumber || null,
+            invoice_number: inv.invoiceNumber || `JB-${inv.id.slice(-8).toUpperCase()}`,
             client_id: client.id,
             job_id: jobId,
             amount_cents: amountCents,
@@ -192,12 +238,25 @@ export async function POST() {
       }
     } while (cursor)
   } catch (err) {
+    const authResp = await checkForAuthError(err, 'invoices')
+    if (authResp) return authResp
     console.error('[sync/jobber] Invoices error:', err)
     results.errors.push(`Invoices: ${err}`)
   }
 
-  // ── Record sync timestamp ─────────────────────────────────────────────────
+  // ── Record sync timestamp + clear error state on success ──────────────────
   const syncedAt = new Date().toISOString()
+  await Promise.all([
+    db.from('app_settings').upsert(
+      { key: 'jobber_reconnect_required', value: 'false', description: 'Jobber reconnect required' },
+      { onConflict: 'key' }
+    ),
+    db.from('app_settings').upsert(
+      { key: 'jobber_last_error', value: '', description: 'Last Jobber sync error' },
+      { onConflict: 'key' }
+    ),
+  ]).catch(() => {})
+
   await db.from('app_settings').upsert(
     { key: 'last_jobber_sync', value: syncedAt, description: 'Last successful Jobber sync' },
     { onConflict: 'key' }

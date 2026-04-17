@@ -50,8 +50,16 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 }
 
 export function RevenueChart({ data }: RevenueChartProps = {}) {
-  const chartData = data && data.length > 0 ? data : SEED_DATA
+  const isDemo = !data || data.length === 0
+  const chartData = isDemo ? SEED_DATA : data
   return (
+    <div className="relative">
+      {isDemo && (
+        <div className="absolute top-0 right-0 z-10 flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-white/[0.04] border border-white/[0.08] text-text-tertiary">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-amber inline-block" />
+          Demo data — sync Jobber for real revenue
+        </div>
+      )}
     <ResponsiveContainer width="100%" height={180}>
       <AreaChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
         <defs>
@@ -98,5 +106,6 @@ export function RevenueChart({ data }: RevenueChartProps = {}) {
         />
       </AreaChart>
     </ResponsiveContainer>
+    </div>
   )
 }

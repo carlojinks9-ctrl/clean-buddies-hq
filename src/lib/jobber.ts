@@ -106,6 +106,10 @@ export async function jobberQuery<T = unknown>(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '')
+    // Distinguish auth failures (reconnect required) from other errors
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`JOBBER_UNAUTHORIZED: ${res.status} — Token invalid or revoked. Reconnect required. Detail: ${body}`)
+    }
     throw new Error(`Jobber API error: ${res.status} ${res.statusText} — ${body}`)
   }
 
@@ -128,6 +132,8 @@ export const JOBS_QUERY = `
         jobNumber
         total { value currency }
         jobStatus
+        startAt
+        completedAt
         createdAt
         updatedAt
         client {
