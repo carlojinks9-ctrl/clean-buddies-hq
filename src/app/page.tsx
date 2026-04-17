@@ -4,6 +4,7 @@ import { ActiveJobsPanel } from '@/components/dashboard/ActiveJobsPanel'
 import { LeadPipelinePanel } from '@/components/dashboard/LeadPipelinePanel'
 import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
 import { SchedulePanel } from '@/components/dashboard/SchedulePanel'
+import { GmailWidget } from '@/components/dashboard/GmailWidget'
 import { RevenueChart } from '@/components/charts/RevenueChart'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { MonoValue } from '@/components/ui/MonoValue'
@@ -15,7 +16,7 @@ async function getDashboardData() {
   try {
     const db = createServerClient()
 
-    const [jobsRes, leadsRes, activityRes, invoicesRes] = await Promise.all([
+    const [jobsRes, leadsRes, activityRes, invoicesRes, employeesRes] = await Promise.all([
       db
         .from('jobs')
         .select('*, client:clients(id, name, company_name)')
@@ -41,6 +42,11 @@ async function getDashboardData() {
         .select('*, client:clients(id, name, company_name)')
         .in('status', ['sent', 'overdue'])
         .order('due_date', { ascending: true }),
+
+      db
+        .from('employees')
+        .select('id, status')
+        .eq('status', 'active'),
     ])
 
     return {
@@ -48,14 +54,15 @@ async function getDashboardData() {
       leads: (leadsRes.data || []) as Lead[],
       activity: (activityRes.data || []) as ActivityFeedItem[],
       invoices: (invoicesRes.data || []) as Invoice[],
+      activeCrewCount: (employeesRes.data || []).length,
     }
   } catch {
-    return { jobs: [], leads: [], activity: [], invoices: [] }
+    return { jobs: [], leads: [], activity: [], invoices: [], activeCrewCount: 0 }
   }
 }
 
 export default async function DashboardPage() {
-  const { jobs, leads, activity, invoices } = await getDashboardData()
+  const { jobs, leads, activity, invoices, activeCrewCount } = await getDashboardData()
 
   // Compute KPIs
   const activeJobs = jobs.filter(j => j.status === 'active' || j.status === 'scheduled')
@@ -63,7 +70,7 @@ export default async function DashboardPage() {
   const totalLaborCents = jobs.reduce((s, j) => s + j.burdened_labor_cents, 0)
   const blendedMargin = grossMargin(monthlyRevenue, totalLaborCents)
   const outstandingAr = invoices.reduce((s, i) => s + i.balance_cents, 0)
-  const activeCrew = 6 // From seed — would come from Jobber timesheets
+  const activeCrew = activeCrewCount
 
   return (
     <div className="space-y-6">
@@ -132,8 +139,9 @@ export default async function DashboardPage() {
         <LeadPipelinePanel leads={leads} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <SchedulePanel />
+        <GmailWidget />
         <ActivityFeed items={activity} />
       </div>
 

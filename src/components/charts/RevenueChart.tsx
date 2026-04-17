@@ -9,7 +9,8 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 
-const DATA = [
+// Fallback seed data — replaced by QBO sync data when available
+const SEED_DATA = [
   { month: 'Oct', revenue: 68000, target: 75000 },
   { month: 'Nov', revenue: 72500, target: 75000 },
   { month: 'Dec', revenue: 59000, target: 75000 },
@@ -18,6 +19,16 @@ const DATA = [
   { month: 'Mar', revenue: 110200, target: 90000 },
   { month: 'Apr', revenue: 124700, target: 100000 },
 ]
+
+interface RevenueDataPoint {
+  month: string
+  revenue: number
+  target?: number
+}
+
+interface RevenueChartProps {
+  data?: RevenueDataPoint[]
+}
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -38,10 +49,11 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null
 }
 
-export function RevenueChart() {
+export function RevenueChart({ data }: RevenueChartProps = {}) {
+  const chartData = data && data.length > 0 ? data : SEED_DATA
   return (
     <ResponsiveContainer width="100%" height={180}>
-      <AreaChart data={DATA} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+      <AreaChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
         <defs>
           <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#1D9E75" stopOpacity={0.25} />
