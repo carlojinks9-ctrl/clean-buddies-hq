@@ -32,7 +32,7 @@ const INTEGRATIONS = [
     description: 'Schedule sync, email notifications',
     icon: '📅',
     authPath: '/api/google/authorize',
-    syncPath: null,
+    syncPath: '/api/sync/google',
     docsUrl: 'https://developers.google.com',
   },
   {
@@ -41,7 +41,7 @@ const INTEGRATIONS = [
     description: 'P&L, AR aging, payroll reconciliation',
     icon: '📊',
     authPath: '/api/qbo/authorize',
-    syncPath: null,
+    syncPath: '/api/sync/qbo',
     docsUrl: 'https://developer.intuit.com',
   },
   {
@@ -62,8 +62,13 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [integrationStatus, setIntegrationStatus] = useState<Record<string, boolean>>({})
   const [lastJobberSync, setLastJobberSync] = useState<string | null>(null)
+  const [lastQboSync, setLastQboSync] = useState<string | null>(null)
+  const [lastGoogleSync, setLastGoogleSync] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [syncingIntegration, setSyncingIntegration] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [syncResults, setSyncResults] = useState<Record<string, { ok: boolean; message: string }>>({})
+
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   // Telegram
   const [tgCrewId, setTgCrewId] = useState('')
@@ -82,8 +87,20 @@ export default function SettingsPage() {
     if (params.get('connected') === 'jobber') {
       setBanner({ type: 'success', message: 'Jobber connected successfully.' })
       window.history.replaceState({}, '', '/settings')
+    } else if (params.get('connected') === 'google') {
+      setBanner({ type: 'success', message: 'Google connected successfully.' })
+      window.history.replaceState({}, '', '/settings')
+    } else if (params.get('connected') === 'qbo') {
+      setBanner({ type: 'success', message: 'QuickBooks Online connected successfully.' })
+      window.history.replaceState({}, '', '/settings')
     } else if (params.get('error') === 'jobber_auth_failed') {
       setBanner({ type: 'error', message: 'Jobber connection failed — check your credentials and try again.' })
+      window.history.replaceState({}, '', '/settings')
+    } else if (params.get('error') === 'google_auth_failed') {
+      setBanner({ type: 'error', message: 'Google connection failed. Try again.' })
+      window.history.replaceState({}, '', '/settings')
+    } else if (params.get('error') === 'qbo_auth_failed') {
+      setBanner({ type: 'error', message: 'QuickBooks connection failed. Try again.' })
       window.history.replaceState({}, '', '/settings')
     }
 
@@ -95,6 +112,8 @@ export default function SettingsPage() {
       items.forEach(s => {
         vals[s.key] = s.value
         if (s.key === 'last_jobber_sync') setLastJobberSync(s.value)
+        if (s.key === 'last_qbo_sync') setLastQboSync(s.value)
+        if (s.key === 'last_google_sync') setLastGoogleSync(s.value)
       })
       setEditing(vals)
 
@@ -183,6 +202,31 @@ export default function SettingsPage() {
       setSyncResult({ ok: false, message: String(err) })
     }
     setSyncing(false)
+  }
+
+  async function syncIntegration(id: string, path: string) {
+    setSyncingIntegration(id)
+    setSyncResults(prev => ({ ...prev, [id]: { ok: false, message: '' } }))
+    try {
+      const res = await fetch(path)
+      const json = await res.json()
+      if (json.error && !json.ok) {
+        setSyncResults(prev => ({ ...prev, [id]: { ok: false, message: json.error } }))
+      } else {
+        const now = new Date().toISOString()
+        if (id === 'qbo') setLastQboSync(now)
+        if (id === 'google') setLastGoogleSync(now)
+        const message = id === 'qbo'
+          ? `Synced P&L${json.errors?.length ? ` · ${json.errors.length} warning(s)` : ''}`
+          : id === 'google'
+          ? `Fetched ${json.events?.length ?? 0} calendar events`
+          : 'Synced'
+        setSyncResults(prev => ({ ...prev, [id]: { ok: true, message } }))
+      }
+    } catch (err) {
+      setSyncResults(prev => ({ ...prev, [id]: { ok: false, message: String(err) } }))
+    }
+    setSyncingIntegration(null)
   }
 
   async function saveTelegramIds() {
@@ -318,6 +362,13 @@ export default function SettingsPage() {
           {INTEGRATIONS.map(integration => {
             const isConnected = integrationStatus[integration.id] || false
             const isJobber = integration.id === 'jobber'
+            const isGenericSync = !isJobber && isConnected && integration.syncPath
+            const isSyncingThis = syncing || syncingIntegration === integration.id
+            const lastSync = isJobber ? lastJobberSync
+              : integration.id === 'qbo' ? lastQboSync
+              : integration.id === 'google' ? lastGoogleSync
+              : null
+            const result = isJobber ? syncResult : syncResults[integration.id]
 
             return (
               <div key={integration.id} className="flex items-start gap-4 px-4 py-4">
@@ -334,18 +385,15 @@ export default function SettingsPage() {
                   </div>
                   <p className="text-[11px] text-text-tertiary mt-0.5">{integration.description}</p>
 
-                  {/* Jobber-specific: last sync + sync result */}
-                  {isJobber && isConnected && (
-                    <div className="mt-2 space-y-1">
+                  {isConnected && integration.syncPath && (
+                    <div className="mt-2 space-y-0.5">
                       <p className="text-[11px] text-text-tertiary font-mono">
                         Last sync:{' '}
-                        {lastJobberSync
-                          ? `${formatDistanceToNow(new Date(lastJobberSync))} ago`
-                          : 'never'}
+                        {lastSync ? `${formatDistanceToNow(new Date(lastSync))} ago` : 'never'}
                       </p>
-                      {syncResult && (
-                        <p className={`text-[11px] font-mono ${syncResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
-                          {syncResult.ok ? '✓ ' : '✗ '}{syncResult.message}
+                      {result?.message && (
+                        <p className={`text-[11px] font-mono ${result.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+                          {result.ok ? '✓ ' : '✗ '}{result.message}
                         </p>
                       )}
                     </div>
@@ -364,16 +412,27 @@ export default function SettingsPage() {
                     </a>
                   )}
 
-                  {/* Sync Now — Jobber only, when connected */}
                   {isJobber && isConnected && integration.syncPath && (
                     <Button
                       variant="secondary"
                       size="sm"
-                      loading={syncing}
+                      loading={isSyncingThis}
                       icon={<RefreshCw className="w-3 h-3" />}
                       onClick={syncJobber}
                     >
-                      {syncing ? 'Syncing…' : 'Sync Now'}
+                      {isSyncingThis ? 'Syncing…' : 'Sync Now'}
+                    </Button>
+                  )}
+
+                  {isGenericSync && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={isSyncingThis}
+                      icon={<RefreshCw className="w-3 h-3" />}
+                      onClick={() => syncIntegration(integration.id, integration.syncPath!)}
+                    >
+                      {isSyncingThis ? 'Syncing…' : 'Sync Now'}
                     </Button>
                   )}
 
@@ -381,11 +440,6 @@ export default function SettingsPage() {
                     <a href={integration.authPath}>
                       <Button variant="secondary" size="sm">Connect</Button>
                     </a>
-                  )}
-                  {isConnected && !isJobber && (
-                    <Button variant="ghost" size="sm" className="text-accent-red hover:text-accent-red">
-                      Disconnect
-                    </Button>
                   )}
                 </div>
               </div>

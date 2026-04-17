@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase'
 import { refreshJobberToken } from '@/lib/jobber'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const db = createServerClient()
   const { data: tokenRow, error } = await db
