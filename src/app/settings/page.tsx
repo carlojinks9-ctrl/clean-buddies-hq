@@ -94,6 +94,12 @@ export default function SettingsPage() {
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [syncResults, setSyncResults] = useState<Record<string, { ok: boolean; message: string }>>({})
+  const [jobberErrors, setJobberErrors] = useState<Array<{
+    section: string; category: string; message: string; raw: string; hint: string
+  }>>([])
+  const [showJobberErrors, setShowJobberErrors] = useState(false)
+  const [debuggingJobber, setDebuggingJobber] = useState(false)
+  const [debugResult, setDebugResult] = useState<{ ok: boolean; detail: string } | null>(null)
 
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(true)
@@ -164,6 +170,9 @@ export default function SettingsPage() {
         if (s.key === 'last_qbo_sync') setLastQboSync(s.value)
         if (s.key === 'last_google_sync') setLastGoogleSync(s.value)
         if (s.key === 'last_quo_sync') setLastQuoSync(s.value)
+        if (s.key === 'jobber_last_sync_errors' && s.value && s.value !== '[]') {
+          try { setJobberErrors(JSON.parse(s.value)) } catch { /* bad JSON */ }
+        }
       })
       setEditing(vals)
 
@@ -258,6 +267,9 @@ export default function SettingsPage() {
   async function syncJobber() {
     setSyncing(true)
     setSyncResult(null)
+    setJobberErrors([])
+    setShowJobberErrors(false)
+    setDebugResult(null)
     try {
       const res = await fetch('/api/sync/jobber', { method: 'POST' })
       const json = await res.json()
@@ -272,9 +284,13 @@ export default function SettingsPage() {
       } else {
         const { synced, synced_at } = json
         setLastJobberSync(synced_at)
+        const errs: typeof jobberErrors = synced.errors || []
+        setJobberErrors(errs)
+        if (errs.length > 0) setShowJobberErrors(true)
+        const hasRealData = synced.clients > 0 || synced.jobs > 0 || synced.invoices > 0
         setSyncResult({
-          ok: true,
-          message: `Synced ${synced.clients} clients · ${synced.jobs} jobs · ${synced.invoices} invoices${synced.errors.length ? ` · ${synced.errors.length} error(s)` : ''}`,
+          ok: hasRealData || errs.length === 0,
+          message: `Synced ${synced.clients} clients · ${synced.jobs} jobs · ${synced.invoices} invoices${errs.length ? ` · ${errs.length} error(s) ↓` : ''}`,
         })
       }
     } catch (err) {
@@ -283,6 +299,31 @@ export default function SettingsPage() {
     setSyncing(false)
     // Refresh health status after sync attempt
     fetch('/api/health').then(r => r.json()).then(setHealthStatus).catch(() => {})
+  }
+
+  async function runJobberDebug() {
+    setDebuggingJobber(true)
+    setDebugResult(null)
+    try {
+      const res = await fetch('/api/jobber/debug')
+      const data = await res.json()
+      if (data.error) {
+        setDebugResult({ ok: false, detail: `Error: ${data.error}\n\nDetail: ${data.detail || ''}` })
+      } else {
+        const tokenOk = data.raw_test?.status === 200
+        const bodyPreview = data.raw_test?.body_preview || ''
+        const wasExpired = data.was_expired ? ' (token was refreshed)' : ''
+        setDebugResult({
+          ok: tokenOk,
+          detail: tokenOk
+            ? `Token valid${wasExpired}. API responded 200.\n\nExpires: ${data.expires_at}\nScope: ${data.scope || 'not set'}\n\nRaw response: ${bodyPreview}`
+            : `API returned HTTP ${data.raw_test?.status}.\n\nExpires: ${data.expires_at}\nScope: ${data.scope || 'not set'}\n\nRaw: ${bodyPreview}`,
+        })
+      }
+    } catch (err) {
+      setDebugResult({ ok: false, detail: String(err) })
+    }
+    setDebuggingJobber(false)
   }
 
   async function syncIntegration(id: string, path: string) {
@@ -608,15 +649,103 @@ export default function SettingsPage() {
                   <p className="text-[11px] text-text-tertiary mt-0.5">{integration.description}</p>
 
                   {isConnected && integration.syncPath && (
-                    <div className="mt-2 space-y-0.5">
+                    <div className="mt-2 space-y-1">
                       <p className="text-[11px] text-text-tertiary font-mono">
                         Last sync:{' '}
                         {lastSync ? `${formatDistanceToNow(new Date(lastSync))} ago` : 'never'}
                       </p>
                       {result?.message && (
                         <p className={`text-[11px] font-mono ${result.ok ? 'text-brand-green' : 'text-accent-red'}`}>
-                          {result.ok ? '✓ ' : '✗ '}{result.message}
+                          {result.ok && jobberErrors.length === 0 ? '✓ ' : '✗ '}{result.message}
                         </p>
+                      )}
+
+                      {/* Jobber: error details panel */}
+                      {isJobber && jobberErrors.length > 0 && (
+                        <div className="mt-2">
+                          <button
+                            onClick={() => setShowJobberErrors(v => !v)}
+                            className="flex items-center gap-1.5 text-[11px] text-accent-amber hover:text-accent-amber/80 transition-colors"
+                          >
+                            <AlertCircle className="w-3 h-3" />
+                            {showJobberErrors ? 'Hide' : 'Show'} {jobberErrors.length} error detail{jobberErrors.length !== 1 ? 's' : ''}
+                          </button>
+
+                          {showJobberErrors && (
+                            <div className="mt-2 space-y-2">
+                              {jobberErrors.map((e, i) => {
+                                const catColor = {
+                                  auth: 'border-accent-red/30 bg-accent-red/5',
+                                  graphql_schema: 'border-accent-amber/30 bg-accent-amber/5',
+                                  db_write: 'border-accent-blue/30 bg-accent-blue/5',
+                                  network: 'border-white/10 bg-white/[0.03]',
+                                  unknown: 'border-white/10 bg-white/[0.03]',
+                                }[e.category] || 'border-white/10 bg-white/[0.03]'
+                                const catLabel = {
+                                  auth: '🔴 AUTH',
+                                  graphql_schema: '🟡 SCHEMA',
+                                  db_write: '🔵 DB WRITE',
+                                  network: '⚪ NETWORK',
+                                  unknown: '⚪ UNKNOWN',
+                                }[e.category] || e.category.toUpperCase()
+                                return (
+                                  <div key={i} className={`rounded-lg border p-3 space-y-1.5 ${catColor}`}>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-mono font-bold text-text-tertiary uppercase tracking-wider">{e.section}</span>
+                                      <span className="text-[10px] font-mono font-bold">{catLabel}</span>
+                                    </div>
+                                    <p className="text-xs font-medium text-text-primary">{e.message}</p>
+                                    <p className="text-[11px] text-text-secondary">{e.hint}</p>
+                                    <details className="text-[10px]">
+                                      <summary className="text-text-tertiary cursor-pointer hover:text-text-secondary select-none">Raw error</summary>
+                                      <pre className="mt-1.5 p-2 rounded bg-black/30 text-text-tertiary whitespace-pre-wrap break-all font-mono leading-relaxed max-h-40 overflow-y-auto">{e.raw}</pre>
+                                    </details>
+                                  </div>
+                                )
+                              })}
+
+                              {/* Debug token button */}
+                              <div className="flex items-center gap-3 pt-1">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  loading={debuggingJobber}
+                                  onClick={runJobberDebug}
+                                  icon={<RefreshCw className="w-3 h-3" />}
+                                >
+                                  Test token & API connection
+                                </Button>
+                              </div>
+
+                              {debugResult && (
+                                <div className={`rounded-lg border p-3 ${debugResult.ok ? 'border-brand-green/30 bg-brand-green/5' : 'border-accent-red/30 bg-accent-red/5'}`}>
+                                  <p className="text-[10px] font-mono font-bold text-text-tertiary mb-1">
+                                    {debugResult.ok ? '✓ TOKEN + API OK' : '✗ TOKEN / API FAILED'}
+                                  </p>
+                                  <pre className="text-[10px] font-mono text-text-secondary whitespace-pre-wrap break-all">{debugResult.detail}</pre>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Jobber: debug button even when no errors (initial state) */}
+                      {isJobber && jobberErrors.length === 0 && isConnected && (
+                        <div className="flex items-center gap-3 mt-1">
+                          <button
+                            onClick={runJobberDebug}
+                            disabled={debuggingJobber}
+                            className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors underline underline-offset-2"
+                          >
+                            {debuggingJobber ? 'Testing…' : 'Test API connection'}
+                          </button>
+                          {debugResult && (
+                            <span className={`text-[11px] font-mono ${debugResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+                              {debugResult.ok ? '✓ Token valid' : '✗ ' + debugResult.detail.slice(0, 80)}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}

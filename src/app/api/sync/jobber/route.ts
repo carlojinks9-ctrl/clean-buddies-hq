@@ -78,7 +78,81 @@ export async function POST() {
     }
   }
 
-  const results = { clients: 0, jobs: 0, invoices: 0, errors: [] as string[] }
+  type SyncError = {
+    section: 'clients' | 'jobs' | 'invoices'
+    category: 'auth' | 'graphql_schema' | 'db_write' | 'network' | 'unknown'
+    message: string   // short, readable
+    raw: string       // full error string for diagnosis
+    hint: string
+  }
+
+  function categorizeError(raw: string, section: SyncError['section']): SyncError {
+    const r = raw.toLowerCase()
+    if (
+      r.includes('jobber_unauthorized') ||
+      r.includes('unauthenticated') ||
+      r.includes('invalid token') ||
+      r.includes('not authenticated') ||
+      r.includes('token') && r.includes('invalid')
+    ) {
+      return {
+        section, raw, category: 'auth',
+        message: 'Token invalid or missing permissions',
+        hint: 'Disconnect and reconnect Jobber in Settings to get fresh tokens.',
+      }
+    }
+    if (
+      r.includes('graphql error') ||
+      r.includes('graphql errors') ||
+      r.includes("doesn't exist on type") ||
+      r.includes('cannot query field') ||
+      r.includes('unknown field') ||
+      r.includes('field') && r.includes('does not exist') ||
+      r.includes('no such field') ||
+      r.includes('unknown argument') ||
+      r.includes('parse error')
+    ) {
+      return {
+        section, raw, category: 'graphql_schema',
+        message: 'GraphQL query field rejected by Jobber API',
+        hint: 'A field in the query does not exist in this Jobber API version. Check the raw error for the exact field name.',
+      }
+    }
+    if (
+      r.includes('duplicate key') ||
+      r.includes('violates') ||
+      r.includes('null value in column') ||
+      r.includes('foreign key') ||
+      r.includes('constraint')
+    ) {
+      return {
+        section, raw, category: 'db_write',
+        message: 'Database write/upsert constraint violation',
+        hint: 'A record from Jobber failed to insert due to a schema constraint. Check the raw error for the column name.',
+      }
+    }
+    if (
+      r.includes('fetch failed') ||
+      r.includes('econnrefused') ||
+      r.includes('enotfound') ||
+      r.includes('network') ||
+      r.includes('timeout') ||
+      r.includes('socket')
+    ) {
+      return {
+        section, raw, category: 'network',
+        message: 'Network error reaching Jobber API',
+        hint: 'Could not reach api.getjobber.com. Check Vercel function logs for connectivity issues.',
+      }
+    }
+    return {
+      section, raw, category: 'unknown',
+      message: raw.slice(0, 120),
+      hint: 'See raw error below for full details.',
+    }
+  }
+
+  const results = { clients: 0, jobs: 0, invoices: 0, errors: [] as SyncError[] }
 
   // Helper: detect auth failures in caught errors and return a reconnect response
   async function checkForAuthError(err: unknown, section: string): Promise<NextResponse | null> {
@@ -133,8 +207,9 @@ export async function POST() {
   } catch (err) {
     const authResp = await checkForAuthError(err, 'clients')
     if (authResp) return authResp
-    console.error('[sync/jobber] Clients error:', err)
-    results.errors.push(`Clients: ${err}`)
+    const e = categorizeError(String(err), 'clients')
+    console.error(`[sync/jobber] CLIENTS ${e.category.toUpperCase()}:`, e.raw)
+    results.errors.push(e)
   }
 
   // ── Sync jobs ─────────────────────────────────────────────────────────────
@@ -184,8 +259,9 @@ export async function POST() {
   } catch (err) {
     const authResp = await checkForAuthError(err, 'jobs')
     if (authResp) return authResp
-    console.error('[sync/jobber] Jobs error:', err)
-    results.errors.push(`Jobs: ${err}`)
+    const e = categorizeError(String(err), 'jobs')
+    console.error(`[sync/jobber] JOBS ${e.category.toUpperCase()}:`, e.raw)
+    results.errors.push(e)
   }
 
   // ── Sync invoices ─────────────────────────────────────────────────────────
@@ -240,22 +316,28 @@ export async function POST() {
   } catch (err) {
     const authResp = await checkForAuthError(err, 'invoices')
     if (authResp) return authResp
-    console.error('[sync/jobber] Invoices error:', err)
-    results.errors.push(`Invoices: ${err}`)
+    const e = categorizeError(String(err), 'invoices')
+    console.error(`[sync/jobber] INVOICES ${e.category.toUpperCase()}:`, e.raw)
+    results.errors.push(e)
   }
 
-  // ── Record sync timestamp + clear error state on success ──────────────────
+  // ── Record sync timestamp + clear/update error state ─────────────────────
   const syncedAt = new Date().toISOString()
-  await Promise.all([
-    db.from('app_settings').upsert(
+  const hasErrors = results.errors.length > 0
+  try {
+    await db.from('app_settings').upsert(
       { key: 'jobber_reconnect_required', value: 'false', description: 'Jobber reconnect required' },
       { onConflict: 'key' }
-    ),
-    db.from('app_settings').upsert(
-      { key: 'jobber_last_error', value: '', description: 'Last Jobber sync error' },
+    )
+    await db.from('app_settings').upsert(
+      {
+        key: 'jobber_last_sync_errors',
+        value: hasErrors ? JSON.stringify(results.errors) : '[]',
+        description: 'Last Jobber sync errors (JSON)',
+      },
       { onConflict: 'key' }
-    ),
-  ]).catch(() => {})
+    )
+  } catch { /* non-fatal */ }
 
   await db.from('app_settings').upsert(
     { key: 'last_jobber_sync', value: syncedAt, description: 'Last successful Jobber sync' },
