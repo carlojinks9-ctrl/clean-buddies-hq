@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
       const tags = Array.isArray(obj.tags) ? obj.tags as string[] : null
       const phoneNumberId = obj.phoneNumberId ? String(obj.phoneNumberId) : null
       const userId = obj.userId ? String(obj.userId) : null
+      const createdAt = obj.createdAt ? String(obj.createdAt) : new Date().toISOString()
 
       const externalPhone = direction === 'inbound' ? from : to
       const { name: contactName, clientId } = await resolveContactName(externalPhone)
@@ -102,6 +103,7 @@ export async function POST(request: NextRequest) {
         is_flagged: flagData.is_flagged,
         flag_reason: flagData.flag_reason,
         client_id: clientId,
+        created_at: createdAt,
       }, { onConflict: 'quo_id' })
 
       // Activity feed
@@ -171,6 +173,7 @@ export async function POST(request: NextRequest) {
       const body = obj.body ? String(obj.body) : null
       const phoneNumberId = obj.phoneNumberId ? String(obj.phoneNumberId) : null
       const userId = obj.userId ? String(obj.userId) : null
+      const msgCreatedAt = obj.createdAt ? String(obj.createdAt) : new Date().toISOString()
 
       const externalPhone = direction === 'inbound' ? from : to
       const { name: contactName, clientId } = await resolveContactName(externalPhone)
@@ -193,6 +196,7 @@ export async function POST(request: NextRequest) {
         is_flagged: flagData.is_flagged,
         flag_reason: flagData.flag_reason,
         client_id: clientId,
+        created_at: msgCreatedAt,
       }, { onConflict: 'quo_id' })
 
       if (!error && direction === 'inbound') {

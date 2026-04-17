@@ -157,7 +157,7 @@ export const CLIENTS_QUERY = `
         name
         companyName
         email
-        phone
+        phones { number }
         createdAt
         isCompany
       }

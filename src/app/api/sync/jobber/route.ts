@@ -73,12 +73,17 @@ export async function POST() {
       cursor = data.clients?.pageInfo?.hasNextPage ? data.clients.pageInfo.endCursor : null
 
       for (const c of nodes) {
+        // phones is an array of { number } objects — take the first one
+        const phone = Array.isArray(c.phones) && c.phones.length > 0
+          ? c.phones[0].number
+          : (c.phone || null)
+
         const { error } = await db.from('clients').upsert({
           jobber_id: c.id,
           name: c.name,
           company_name: c.companyName || null,
           email: c.email || null,
-          phone: c.phone || null,
+          phone: phone || null,
           is_gc: c.isCompany || false,
         }, { onConflict: 'jobber_id' })
         if (!error) results.clients++
