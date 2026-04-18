@@ -147,7 +147,7 @@ export const JOBS_QUERY = `
         id
         title
         jobNumber
-        total
+        total { value }
         jobStatus
         startAt
         completedAt
@@ -194,15 +194,18 @@ export const INVOICES_QUERY = `
       nodes {
         id
         invoiceNumber
-        total
+        total { value }
+        balance { value }
+        status
         dueDate
         issuedDate
+        paidDate
         client {
           id
           name
           companyName
         }
-        jobs { nodes { id title } }
+        job { id title }
       }
       pageInfo { hasNextPage endCursor }
     }

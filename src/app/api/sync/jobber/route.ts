@@ -101,6 +101,15 @@ export async function POST() {
         hint: 'Disconnect and reconnect Jobber in Settings to get fresh tokens.',
       }
     }
+    // THROTTLED must be checked BEFORE the generic graphql_schema branch —
+    // the throttle error also contains "graphql errors" and would be misclassified.
+    if (r.includes('throttled') || r.includes('"code":"throttled"')) {
+      return {
+        section, raw, category: 'unknown',
+        message: 'Jobber API rate limit hit (THROTTLED)',
+        hint: 'Too many requests in quick succession. The sync will succeed if retried after a few seconds. Jobber uses a leaky-bucket rate limiter.',
+      }
+    }
     if (
       r.includes('graphql error') ||
       r.includes('graphql errors') ||
@@ -154,6 +163,25 @@ export async function POST() {
 
   const results = { clients: 0, jobs: 0, invoices: 0, errors: [] as SyncError[] }
 
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+  // Jobber uses a leaky-bucket rate limiter. Wrap each page query with one retry
+  // on THROTTLED so that a momentary burst doesn't fail an entire section.
+  async function jobberQueryWithRetry<T>(
+    token: string, query: string, variables?: Record<string, unknown>
+  ): Promise<T> {
+    try {
+      return await jobberQuery<T>(token, query, variables)
+    } catch (err) {
+      if (String(err).toLowerCase().includes('throttled')) {
+        console.warn('[sync/jobber] THROTTLED — waiting 3s then retrying once')
+        await sleep(3000)
+        return await jobberQuery<T>(token, query, variables)
+      }
+      throw err
+    }
+  }
+
   // Helper: detect auth failures in caught errors and return a reconnect response
   async function checkForAuthError(err: unknown, section: string): Promise<NextResponse | null> {
     const msg = String(err)
@@ -182,7 +210,7 @@ export async function POST() {
   try {
     let cursor: string | null = null
     do {
-      const data: any = await jobberQuery(accessToken, CLIENTS_QUERY, { cursor })
+      const data: any = await jobberQueryWithRetry(accessToken, CLIENTS_QUERY, { cursor })
       console.log('[sync/jobber] clients page:', JSON.stringify(data).slice(0, 500))
       const nodes = data.clients?.nodes || []
       cursor = data.clients?.pageInfo?.hasNextPage ? data.clients.pageInfo.endCursor : null
@@ -213,10 +241,11 @@ export async function POST() {
   }
 
   // ── Sync jobs ─────────────────────────────────────────────────────────────
+  await sleep(1500)  // let the leaky bucket refill after clients sync
   try {
     let cursor: string | null = null
     do {
-      const data: any = await jobberQuery(accessToken, JOBS_QUERY, { cursor })
+      const data: any = await jobberQueryWithRetry(accessToken, JOBS_QUERY, { cursor })
       console.log('[sync/jobber] jobs page:', JSON.stringify(data).slice(0, 500))
       const nodes = data.jobs?.nodes || []
       cursor = data.jobs?.pageInfo?.hasNextPage ? data.jobs.pageInfo.endCursor : null
@@ -265,10 +294,11 @@ export async function POST() {
   }
 
   // ── Sync invoices ─────────────────────────────────────────────────────────
+  await sleep(1500)  // let the leaky bucket refill after jobs sync
   try {
     let cursor: string | null = null
     do {
-      const data: any = await jobberQuery(accessToken, INVOICES_QUERY, { cursor })
+      const data: any = await jobberQueryWithRetry(accessToken, INVOICES_QUERY, { cursor })
       console.log('[sync/jobber] invoices page:', JSON.stringify(data).slice(0, 500))
       const nodes = data.invoices?.nodes || []
       cursor = data.invoices?.pageInfo?.hasNextPage ? data.invoices.pageInfo.endCursor : null
@@ -286,12 +316,14 @@ export async function POST() {
           .single()
 
         // Resolve FK: job (optional — invoices can exist without a linked job)
+        // Query uses singular `job { id }` — Jobber invoices link to one job
         let jobId: string | null = null
-        if (inv.job?.id) {
+        const linkedJobId = inv.job?.id ?? inv.jobs?.nodes?.[0]?.id ?? null
+        if (linkedJobId) {
           const { data: job } = await db
             .from('jobs')
             .select('id')
-            .eq('jobber_id', inv.job.id)
+            .eq('jobber_id', linkedJobId)
             .single()
           jobId = job?.id ?? null
         }
