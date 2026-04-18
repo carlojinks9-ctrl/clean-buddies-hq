@@ -123,10 +123,6 @@ export default function SettingsPage() {
   const [lastQuoSync, setLastQuoSync] = useState<string | null>(null)
   const [syncingQuo, setSyncingQuo] = useState(false)
   const [quoSyncResult, setQuoSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
-  const [registeringQuoWebhook, setRegisteringQuoWebhook] = useState(false)
-  const [quoWebhookResult, setQuoWebhookResult] = useState<{ ok: boolean; message: string } | null>(null)
-  const [quoWebhookStatus, setQuoWebhookStatus] = useState<{ url?: string } | null>(null)
-
   // GHL
   const [syncingGhl, setSyncingGhl] = useState(false)
   const [ghlSyncResult, setGhlSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
@@ -243,19 +239,8 @@ export default function SettingsPage() {
       } catch { /* no-op */ }
     }
 
-    async function fetchQuoWebhookStatus() {
-      try {
-        const res = await fetch('/api/quo/setup')
-        if (res.ok) {
-          const data = await res.json()
-          if (data.webhooks?.[0]) setQuoWebhookStatus({ url: data.webhooks[0].url })
-        }
-      } catch { /* no-op */ }
-    }
-
     load()
     fetchWebhookStatus()
-    fetchQuoWebhookStatus()
 
     // Load SLA rules
     supabase.from('sla_rules').select('id, name, threshold_minutes, is_active').order('name')
@@ -446,24 +431,6 @@ export default function SettingsPage() {
       setQuoSyncResult({ ok: false, message: String(err) })
     }
     setSyncingQuo(false)
-  }
-
-  async function registerQuoWebhook() {
-    setRegisteringQuoWebhook(true)
-    setQuoWebhookResult(null)
-    try {
-      const res = await fetch('/api/quo/setup', { method: 'POST' })
-      const data = await res.json()
-      if (data.ok) {
-        setQuoWebhookStatus({ url: data.webhook_url })
-        setQuoWebhookResult({ ok: true, message: `Webhook registered: ${data.webhook_url}` })
-      } else {
-        setQuoWebhookResult({ ok: false, message: data.error || 'Registration failed' })
-      }
-    } catch (err) {
-      setQuoWebhookResult({ ok: false, message: String(err) })
-    }
-    setRegisteringQuoWebhook(false)
   }
 
   async function sendDigestNow() {
@@ -942,41 +909,31 @@ export default function SettingsPage() {
 
           {/* Webhook */}
           <div>
-            <p className="text-xs font-medium text-text-secondary mb-2">Webhook (real-time events)</p>
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex-1 min-w-0 p-2.5 rounded-lg bg-bg-elevated border border-white/[0.06] font-mono text-[11px]">
-                {quoWebhookStatus?.url
-                  ? <span className="text-brand-green">{quoWebhookStatus.url}</span>
-                  : <span className="text-text-tertiary">Not registered</span>
-                }
+            <p className="text-xs font-medium text-text-secondary mb-2">Webhook URL (configure manually in Quo)</p>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0 p-2.5 rounded-lg bg-bg-elevated border border-white/[0.06] font-mono text-[11px] text-brand-green truncate">
+                {(process.env.NEXT_PUBLIC_APP_URL || 'https://your-app.vercel.app') + '/api/quo/webhook'}
               </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                loading={registeringQuoWebhook}
-                icon={<Radio className="w-3.5 h-3.5" />}
-                onClick={registerQuoWebhook}
+              <button
+                onClick={() => navigator.clipboard.writeText((process.env.NEXT_PUBLIC_APP_URL || '') + '/api/quo/webhook')}
+                className="p-2 rounded-lg hover:bg-white/[0.08] text-text-tertiary hover:text-text-primary transition-colors flex-shrink-0"
+                title="Copy webhook URL"
               >
-                {registeringQuoWebhook ? 'Registering…' : 'Register Webhook'}
-              </Button>
+                <Copy className="w-3.5 h-3.5" />
+              </button>
             </div>
-            {quoWebhookResult && (
-              <p className={`text-[11px] mt-1.5 font-mono ${quoWebhookResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
-                {quoWebhookResult.ok ? '✓ ' : '✗ '}{quoWebhookResult.message}
-              </p>
-            )}
-            <p className="text-[10px] text-text-tertiary mt-2">
-              Events: call.completed · call.summary.completed · message.received · message.sent
+            <p className="text-[10px] text-text-tertiary mt-2 leading-relaxed">
+              Events to enable: <span className="font-mono">call.ringing · call.completed · call.recording.completed · call.summary.completed · call.transcript.completed · message.received · message.delivered · contact.updated · contact.deleted</span>
             </p>
           </div>
 
-          <div className="p-3 rounded-lg bg-bg-elevated border border-white/[0.06] text-xs text-text-secondary space-y-1">
+          <div className="p-3 rounded-lg bg-bg-elevated border border-white/[0.06] text-xs text-text-secondary space-y-1.5">
             <p className="font-medium text-text-primary">Setup</p>
             <ol className="list-decimal list-inside space-y-1">
-              <li>Add <code className="font-mono text-accent-blue">QUO_API_KEY</code> and <code className="font-mono text-accent-blue">ANTHROPIC_API_KEY</code> to Vercel env vars</li>
-              <li>Click <b>Register Webhook</b> to set up real-time events</li>
-              <li>Click <b>Sync Now</b> to pull existing call history</li>
-              <li>AI flagging activates automatically when <code className="font-mono">ANTHROPIC_API_KEY</code> is set</li>
+              <li>Add <code className="font-mono text-accent-blue">QUO_API_KEY</code> to Vercel env vars (Settings → API Keys in Quo)</li>
+              <li>In Quo → <b>Settings → Webhooks → Create webhook</b> → paste the URL above → select all 9 events</li>
+              <li>After saving, click <b>Reveal signing secret</b> in Quo and add it as <code className="font-mono text-accent-blue">QUO_WEBHOOK_SIGNING_SECRET</code> in Vercel</li>
+              <li>Click <b>Sync Now</b> to pull existing call history — new events arrive in real-time via webhook</li>
             </ol>
           </div>
         </CardContent>
@@ -1554,6 +1511,7 @@ Other commands:
               { key: 'JOBBER_CLIENT_ID', value: healthStatus?.env.JOBBER_CLIENT_ID },
               { key: 'JOBBER_CLIENT_SECRET', value: healthStatus?.env.JOBBER_CLIENT_SECRET },
               { key: 'QUO_API_KEY', value: healthStatus?.env.QUO_API_KEY },
+              { key: 'QUO_WEBHOOK_SIGNING_SECRET', value: healthStatus?.env.QUO_WEBHOOK_SIGNING_SECRET },
               { key: 'TELEGRAM_BOT_TOKEN', value: healthStatus?.env.TELEGRAM_BOT_TOKEN },
               { key: 'GOOGLE_CLIENT_ID', value: healthStatus?.env.GOOGLE_CLIENT_ID },
               { key: 'GOOGLE_CLIENT_SECRET', value: healthStatus?.env.GOOGLE_CLIENT_SECRET },

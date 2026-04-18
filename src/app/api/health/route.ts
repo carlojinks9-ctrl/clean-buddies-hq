@@ -43,6 +43,7 @@ export async function GET() {
       JOBBER_CLIENT_ID: !!process.env.JOBBER_CLIENT_ID,
       JOBBER_CLIENT_SECRET: !!process.env.JOBBER_CLIENT_SECRET,
       QUO_API_KEY: !!process.env.QUO_API_KEY,
+      QUO_WEBHOOK_SIGNING_SECRET: !!process.env.QUO_WEBHOOK_SIGNING_SECRET,
       TELEGRAM_BOT_TOKEN: !!process.env.TELEGRAM_BOT_TOKEN,
       TELEGRAM_MANAGEMENT_CHAT_ID: !!(process.env.TELEGRAM_MANAGEMENT_CHAT_ID || settingsMap.get('telegram_management_chat_id')),
       GOOGLE_CLIENT_ID: !!process.env.GOOGLE_CLIENT_ID,
