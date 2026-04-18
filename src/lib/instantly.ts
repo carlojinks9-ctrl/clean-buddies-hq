@@ -37,21 +37,26 @@ async function instantlyFetch<T = unknown>(path: string, options?: RequestInit):
 export interface InstantlyCampaign {
   id: string
   name: string
-  status: string   // 'active' | 'paused' | 'completed'
+  status: number   // 1=active, 2=paused, etc.
   timestamp_created: string
 }
 
+// v2 API email object — field names match the real API response
 export interface InstantlyEmail {
   id: string
   campaign_id: string
-  campaign_name: string | null
-  from_address: string
-  to_address: string
+  // v2 uses from_address_email / to_address_email_list (not from_address/to_address)
+  from_address_email: string
+  to_address_email_list: string
   subject: string | null
-  body: string | null
-  timestamp_received: string
-  read: boolean
-  reply_to_type: string  // 'received' means it's a reply from the prospect
+  body: { text?: string | null; html?: string | null } | null
+  timestamp_created: string
+  timestamp_email: string
+  is_unread: boolean
+  ue_type: number  // 1=outbound, 2=inbound/received
+  // Optional enrichment fields
+  campaign_name?: string | null
+  lead?: { email?: string; firstName?: string; lastName?: string; companyName?: string } | null
 }
 
 export interface InstantlyLead {
@@ -79,29 +84,23 @@ export async function getCampaigns(): Promise<InstantlyCampaign[]> {
 }
 
 /**
- * Get email replies received (inbound replies from prospects).
- * v2 API: GET /emails with filter for replies
+ * Get inbound emails received from prospects (ue_type=2).
+ * v2 API: GET /emails?ue_type=2
+ * Confirmed via live API test: ue_type=1 outbound, ue_type=2 inbound/received.
  */
 export async function getReceivedEmails(params: {
   campaignId?: string
   limit?: number
-  skip?: number
 } = {}): Promise<InstantlyEmail[]> {
   const qs = new URLSearchParams({
     limit: String(params.limit ?? 20),
-    // v2 uses "starting_after" for cursor pagination, "skip" is not valid
-    // For simplicity, we fetch the first page each time (dedup by instantly_id in DB)
+    ue_type: '2',  // 2 = inbound/received — confirmed via API
   })
   if (params.campaignId) qs.set('campaign_id', params.campaignId)
 
-  // v2 endpoint: /emails — returns unified inbox emails
-  // Replies from prospects are type "received" in v1, filter varies in v2
-  const res = await instantlyFetch<{ items?: InstantlyEmail[]; data?: InstantlyEmail[] } | InstantlyEmail[]>(
-    `/emails?${qs}`
-  )
+  const res = await instantlyFetch<{ items?: InstantlyEmail[] } | InstantlyEmail[]>(`/emails?${qs}`)
   if (Array.isArray(res)) return res
-  const payload = res as { items?: InstantlyEmail[]; data?: InstantlyEmail[] }
-  return payload.items ?? payload.data ?? []
+  return (res as { items?: InstantlyEmail[] }).items ?? []
 }
 
 /**

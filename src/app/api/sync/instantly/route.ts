@@ -42,7 +42,13 @@ async function runSync() {
           .maybeSingle()
         if (existing) continue
 
-        const { sentiment, tags } = classifyReply(email.subject, email.body)
+        // v2: from_address_email, body is { text, html } object
+        const fromEmail = email.from_address_email
+        const bodyText = email.body?.text ?? null
+        const campaignName = email.lead?.companyName ?? email.campaign_id
+        const timestamp = email.timestamp_email || email.timestamp_created
+
+        const { sentiment, tags } = classifyReply(email.subject, bodyText)
 
         // Insert into instantly_replies
         const { data: reply, error: replyError } = await db
@@ -50,15 +56,15 @@ async function runSync() {
           .insert({
             instantly_id: email.id,
             campaign_id: email.campaign_id,
-            campaign_name: email.campaign_name,
-            from_email: email.from_address,
-            from_name: extractName(email.from_address),
+            campaign_name: campaignName,
+            from_email: fromEmail,
+            from_name: extractName(fromEmail),
             subject: email.subject,
-            body_preview: email.body ? email.body.replace(/<[^>]+>/g, '').slice(0, 200) : null,
+            body_preview: bodyText ? bodyText.replace(/<[^>]+>/g, '').slice(0, 200) : null,
             sentiment,
             tags,
             processed: false,
-            received_at: email.timestamp_received,
+            received_at: timestamp,
           })
           .select('id')
           .single()
@@ -73,8 +79,8 @@ async function runSync() {
         if (sentiment === 'positive') {
           positiveReplies++
 
-          const contactName = extractName(email.from_address)
-          const domain = email.from_address.split('@')[1] || ''
+          const contactName = extractName(fromEmail)
+          const domain = fromEmail.split('@')[1] || ''
           const isCommercial = isCommercialDomain(domain)
 
           // Create lead
@@ -82,7 +88,7 @@ async function runSync() {
             .from('leads')
             .insert({
               name: contactName,
-              email: email.from_address,
+              email: fromEmail,
               source: 'instantly',
               status: 'contacted',
               urgency: 'high',
@@ -92,7 +98,7 @@ async function runSync() {
               tags: [...tags, 'cold-outreach-reply'],
               pipeline_stage: 'contacted',
               last_activity_at: new Date().toISOString(),
-              notes: `Campaign: ${email.campaign_name || email.campaign_id}\nSubject: ${email.subject || '(no subject)'}\n\n${email.body ? email.body.replace(/<[^>]+>/g, '').slice(0, 500) : ''}`,
+              notes: `Campaign: ${campaignName}\nSubject: ${email.subject || '(no subject)'}\n\n${bodyText ? bodyText.slice(0, 500) : ''}`,
             })
             .select('id')
             .single()
@@ -111,10 +117,10 @@ async function runSync() {
                 source: 'instantly',
                 source_id: email.id,
                 contact_name: contactName,
-                email: email.from_address,
+                email: fromEmail,
                 company: isCommercial ? domain.split('.')[0] : null,
                 subject: email.subject || '(no subject)',
-                body_preview: email.body ? email.body.replace(/<[^>]+>/g, '').slice(0, 150) : null,
+                body_preview: bodyText ? bodyText.slice(0, 150) : null,
                 urgency: 'high',
                 tags: [...tags, 'cold-outreach-reply'],
                 status: 'new',
@@ -134,7 +140,7 @@ async function runSync() {
             await db.from('activity_feed').insert({
               event_type: 'new_lead',
               title: `Instantly reply — ${contactName}`,
-              description: `${email.subject || '(no subject)'} · Campaign: ${email.campaign_name || email.campaign_id}`,
+              description: `${email.subject || '(no subject)'} · Campaign: ${campaignName}`,
               lead_id: lead.id,
             })
 
@@ -147,7 +153,7 @@ async function runSync() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   chat_id: mgmtChat,
-                  text: `📧 <b>Instantly Reply — Action Needed</b>\n\nFrom: <b>${contactName}</b> (${email.from_address})\nSubject: ${email.subject || '(no subject)'}\n\n<a href="${appUrl}/inbox">View in Inbox →</a>`,
+                  text: `📧 <b>Instantly Reply — Action Needed</b>\n\nFrom: <b>${contactName}</b> (${fromEmail})\nSubject: ${email.subject || '(no subject)'}\n\n<a href="${appUrl}/inbox">View in Inbox →</a>`,
                   parse_mode: 'HTML',
                   disable_web_page_preview: true,
                 }),
