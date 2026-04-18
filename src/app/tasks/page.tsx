@@ -18,6 +18,13 @@ import { clsx } from 'clsx'
 
 const CATEGORIES = ['all', 'sales', 'operations', 'admin', 'hiring', 'finance'] as const
 
+// Smart shortcuts — combine display label + matching categories + optional status filter
+const SHORTCUTS = [
+  { label: 'Invoicing',    category: 'finance',    emoji: '💰' },
+  { label: 'Proposals',    category: 'sales',      emoji: '📋' },
+  { label: 'Walkthroughs', category: 'operations', emoji: '🏗' },
+] as const
+
 const CATEGORY_BADGE: Record<string, any> = {
   sales: 'green', operations: 'blue', admin: 'gray', hiring: 'purple', finance: 'amber',
 }
@@ -205,12 +212,16 @@ export default function TasksPage() {
     // Optimistic
     setTasks(ts => ts.map(t => t.id === id ? { ...t, status } : t))
 
+    // Auto-expand done section so task doesn't "disappear"
+    if (status === 'done') setShowDone(true)
+
     const { error } = await supabase.from('tasks').update({ status }).eq('id', id)
     if (error) {
       setTasks(ts => ts.map(t => t.id === id ? { ...t, status: prev.status } : t))
       toast(`Update failed: ${error.message}`, 'error')
     } else {
-      if (status === 'done') toast('Task marked done ✓')
+      if (status === 'done') toast('Task done — visible in completed section below ↓')
+      if (status === 'todo' || status === 'in_progress') toast('Task reopened')
     }
   }
 
@@ -220,7 +231,7 @@ export default function TasksPage() {
     const next: Record<Task['status'], Task['status']> = {
       todo: 'in_progress',
       in_progress: 'done',
-      done: 'todo',
+      done: 'todo',  // clicking again on done = reopen
     }
     updateStatus(task.id, next[task.status])
   }
@@ -500,6 +511,22 @@ export default function TasksPage() {
               )}
             >
               {cat}
+            </button>
+          ))}
+          <div className="w-px h-4 bg-white/10 mx-1" />
+          {/* Smart category shortcuts */}
+          {SHORTCUTS.map(s => (
+            <button
+              key={s.label}
+              onClick={() => setCatFilter(s.category)}
+              className={clsx(
+                'px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+                catFilter === s.category
+                  ? 'bg-accent-blue/10 text-accent-blue border border-accent-blue/20'
+                  : 'text-text-tertiary hover:text-text-secondary hover:bg-white/[0.04]'
+              )}
+            >
+              {s.emoji} {s.label}
             </button>
           ))}
           <div className="w-px h-4 bg-white/10 mx-1" />
@@ -806,19 +833,24 @@ export default function TasksPage() {
         ))}
       </div>
 
-      {/* Done section — collapsible */}
+      {/* Done section — collapsible, auto-expands when task is marked done */}
       {(doneTasks.length > 0 || loading) && (
         <div>
           <button
             onClick={() => setShowDone(p => !p)}
-            className="flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition-colors mb-3 group"
+            className="flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition-colors mb-3 group w-full"
           >
             <CheckCircle2 className="w-4 h-4 text-brand-green" />
-            <span className="font-medium">Done</span>
+            <span className="font-medium">Completed</span>
             <span className="text-[11px] text-text-tertiary font-mono">({doneTasks.length})</span>
             <span className="ml-1 text-text-tertiary group-hover:text-text-secondary transition-colors">
               {showDone ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </span>
+            {!showDone && doneTasks.length > 0 && (
+              <span className="ml-auto text-[11px] text-text-tertiary italic">
+                click to show · click check icon on any task to reopen
+              </span>
+            )}
           </button>
 
           {showDone && (

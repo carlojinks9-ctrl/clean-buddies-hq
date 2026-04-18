@@ -20,18 +20,23 @@ export async function GET() {
         db.from('employees').select('id', { count: 'exact', head: true }),
         db.from('tasks').select('id', { count: 'exact', head: true }),
         db.from('supply_requests').select('id', { count: 'exact', head: true }),
+        db.from('inbound_items').select('id', { count: 'exact', head: true }).eq('status', 'new'),
+        db.from('ghl_submissions').select('id', { count: 'exact', head: true }),
+        db.from('instantly_replies').select('id', { count: 'exact', head: true }),
+        db.from('sla_breaches').select('id', { count: 'exact', head: true }).gte('created_at', new Date(Date.now() - 24 * 60 * 60_000).toISOString()),
       ]),
     ])
 
-    const tokenMap = new Map((tokensRes.data || []).map(t => [t.service, t]))
-    const settingsMap = new Map((settingsRes.data || []).map(s => [s.key, s.value]))
+    const tokenMap = new Map((tokensRes.data || []).map((t: Record<string, unknown>) => [t.service as string, t]))
+    const settingsMap = new Map((settingsRes.data || []).map((s: Record<string, unknown>) => [s.key as string, s.value as string]))
 
-    const jobberToken = tokenMap.get('jobber')
+    const jobberToken = tokenMap.get('jobber') as Record<string, string> | undefined
     const jobberExpired = jobberToken?.expires_at
       ? new Date(jobberToken.expires_at).getTime() < Date.now()
       : null
 
-    const [clientsR, jobsR, invoicesR, leadsR, quoCallsR, quoMsgsR, employeesR, tasksR, suppliesR] = counts
+    const [clientsR, jobsR, invoicesR, leadsR, quoCallsR, quoMsgsR, employeesR, tasksR, suppliesR,
+      inboundItemsR, ghlSubsR, instantlyRepliesR, slaBreachesR] = counts
 
     // Check env vars server-side only — never expose values
     const env = {
@@ -46,6 +51,9 @@ export async function GET() {
       VAPID_PRIVATE_KEY: !!process.env.VAPID_PRIVATE_KEY,
       ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
       SUPABASE_SERVICE_ROLE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      GHL_PRIVATE_INTEGRATION_TOKEN: !!process.env.GHL_PRIVATE_INTEGRATION_TOKEN,
+      GHL_LOCATION_ID: !!process.env.GHL_LOCATION_ID,
+      INSTANTLY_API_KEY: !!process.env.INSTANTLY_API_KEY,
     }
 
     return NextResponse.json({
@@ -74,6 +82,17 @@ export async function GET() {
           mgmt_chat_configured: env.TELEGRAM_MANAGEMENT_CHAT_ID,
           last_digest: settingsMap.get('last_telegram_digest') || null,
         },
+        ghl: {
+          token_set: env.GHL_PRIVATE_INTEGRATION_TOKEN,
+          location_id_set: env.GHL_LOCATION_ID,
+          last_sync: settingsMap.get('last_ghl_sync') || null,
+          last_error: settingsMap.get('ghl_last_error') || null,
+        },
+        instantly: {
+          api_key_set: env.INSTANTLY_API_KEY,
+          last_sync: settingsMap.get('last_instantly_sync') || null,
+          last_error: settingsMap.get('instantly_last_error') || null,
+        },
       },
       records: {
         clients: clientsR.count ?? 0,
@@ -85,6 +104,10 @@ export async function GET() {
         employees: employeesR.count ?? 0,
         tasks: tasksR.count ?? 0,
         supply_requests: suppliesR.count ?? 0,
+        inbound_items_new: (inboundItemsR as { count: number | null }).count ?? 0,
+        ghl_submissions: (ghlSubsR as { count: number | null }).count ?? 0,
+        instantly_replies: (instantlyRepliesR as { count: number | null }).count ?? 0,
+        sla_breaches_24h: (slaBreachesR as { count: number | null }).count ?? 0,
       },
       env,
     })

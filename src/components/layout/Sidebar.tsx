@@ -17,10 +17,12 @@ import {
   LogOut,
   X,
   Phone,
+  Inbox,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
   { href: '/',                label: 'Dashboard',      icon: LayoutDashboard },
+  { href: '/inbox',           label: 'Inbox',          icon: Inbox, badge: true },
   { href: '/jobs',            label: 'Jobs',           icon: Briefcase },
   { href: '/clients',         label: 'Clients',        icon: Users },
   { href: '/communications',  label: 'Communications', icon: Phone },
@@ -40,11 +42,24 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [inboxCount, setInboxCount] = useState<number>(0)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       setUserEmail(data.user?.email ?? null)
     })
+
+    // Fetch urgent inbox count
+    async function loadInboxCount() {
+      try {
+        const { count } = await supabase
+          .from('inbound_items')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'new')
+        setInboxCount(count ?? 0)
+      } catch { /* non-critical */ }
+    }
+    loadInboxCount()
   }, [])
 
   async function handleLogout() {
@@ -87,8 +102,9 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+        {NAV_ITEMS.map(({ href, label, icon: Icon, badge }) => {
           const isActive = href === '/' ? pathname === '/' : pathname.startsWith(href)
+          const showBadge = badge && inboxCount > 0
           return (
             <Link
               key={href}
@@ -108,6 +124,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 )}
               />
               {label}
+              {showBadge && !isActive && (
+                <span className="ml-auto px-1.5 py-0.5 rounded-full bg-accent-red text-white text-[10px] font-bold min-w-[18px] text-center">
+                  {inboxCount > 99 ? '99+' : inboxCount}
+                </span>
+              )}
               {isActive && (
                 <span className="ml-auto w-1 h-4 bg-brand-green rounded-full" />
               )}

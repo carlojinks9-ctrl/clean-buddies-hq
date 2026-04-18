@@ -41,13 +41,100 @@ export interface Lead {
   address: string | null
   service_type: string | null
   message: string | null
-  status: 'new' | 'contacted' | 'bid_sent' | 'won' | 'lost'
+  status: 'new' | 'contacted' | 'bid_sent' | 'won' | 'lost' | 'qualified' | 'estimate_needed' | 'estimate_sent' | 'follow_up' | 'nurture'
   estimated_value_cents: number | null
-  source: 'website' | 'jobber' | 'referral' | 'manual' | null
+  source: 'website' | 'jobber' | 'referral' | 'manual' | 'quo' | 'gmail' | 'instantly' | 'ghl' | null
   assigned_to: string | null
   notes: string | null
+  // Extended fields from migration 004
+  urgency: 'high' | 'medium' | 'low' | null
+  owner: string | null
+  next_action: string | null
+  next_action_due: string | null
+  risk_score: number | null
+  pipeline_stage: string | null
+  tags: string[] | null
+  sla_status: 'ok' | 'at_risk' | 'breached' | null
+  sla_breached_at: string | null
+  last_activity_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface InboundItem {
+  id: string
+  source: 'quo_call' | 'quo_message' | 'gmail' | 'instantly' | 'ghl' | 'manual'
+  source_id: string | null
+  contact_name: string | null
+  phone: string | null
+  email: string | null
+  company: string | null
+  subject: string | null
+  body_preview: string | null
+  urgency: 'high' | 'medium' | 'low'
+  tags: string[]
+  status: 'new' | 'viewed' | 'actioned' | 'snoozed' | 'closed'
+  actioned_at: string | null
+  actioned_by: string | null
+  sla_deadline: string | null
+  sla_breached: boolean
+  sla_rule: string | null
+  lead_id: string | null
+  task_id: string | null
+  client_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SlaRule {
+  id: string
+  name: string
+  source: string
+  condition_key: string
+  threshold_minutes: number
+  urgency_default: 'high' | 'medium' | 'low'
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface GhlSubmission {
+  id: string
+  ghl_id: string | null
+  form_id: string | null
+  form_name: string | null
+  contact_id: string | null
+  contact_name: string | null
+  email: string | null
+  phone: string | null
+  message: string | null
+  service_type: string | null
+  address: string | null
+  tags: string[]
+  raw_data: Record<string, unknown> | null
+  processed: boolean
+  lead_id: string | null
+  inbound_item_id: string | null
+  received_at: string
+  created_at: string
+}
+
+export interface InstantlyReply {
+  id: string
+  instantly_id: string | null
+  campaign_id: string | null
+  campaign_name: string | null
+  from_email: string | null
+  from_name: string | null
+  subject: string | null
+  body_preview: string | null
+  sentiment: 'positive' | 'neutral' | 'negative' | 'out_of_office' | 'unsubscribe' | 'unknown'
+  tags: string[]
+  processed: boolean
+  lead_id: string | null
+  inbound_item_id: string | null
+  received_at: string
+  created_at: string
 }
 
 export interface Invoice {

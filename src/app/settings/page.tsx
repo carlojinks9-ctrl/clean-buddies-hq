@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge'
 import {
   Settings, Zap, Send, Globe,
   Save, CheckCircle2, AlertCircle, ExternalLink, RefreshCw, Copy, Radio, LogOut, Phone, Bell, BellOff,
-  Database, ShieldAlert,
+  Database, ShieldAlert, Inbox, Clock,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { requestPushPermission } from '@/components/layout/PwaInit'
@@ -27,10 +27,13 @@ interface HealthStatus {
     quo: { api_key_set: boolean; last_sync: string | null }
     google: { connected: boolean; last_sync: string | null; env_ok: boolean }
     telegram: { token_set: boolean; mgmt_chat_configured: boolean; last_digest: string | null }
+    ghl?: { token_set: boolean; location_id_set: boolean; last_sync: string | null; last_error: string | null }
+    instantly?: { api_key_set: boolean; last_sync: string | null; last_error: string | null }
   }
   records: {
     clients: number; jobs: number; invoices: number; leads: number
     quo_calls: number; quo_messages: number; employees: number; tasks: number; supply_requests: number
+    inbound_items_new?: number; ghl_submissions?: number; instantly_replies?: number; sla_breaches_24h?: number
   }
   env: Record<string, boolean>
 }
@@ -123,6 +126,20 @@ export default function SettingsPage() {
   const [registeringQuoWebhook, setRegisteringQuoWebhook] = useState(false)
   const [quoWebhookResult, setQuoWebhookResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [quoWebhookStatus, setQuoWebhookStatus] = useState<{ url?: string } | null>(null)
+
+  // GHL
+  const [syncingGhl, setSyncingGhl] = useState(false)
+  const [ghlSyncResult, setGhlSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  // Instantly
+  const [syncingInstantly, setSyncingInstantly] = useState(false)
+  const [instantlySyncResult, setInstantlySyncResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  // SLA
+  const [checkingSla, setCheckingSla] = useState(false)
+  const [slaCheckResult, setSlaCheckResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [slaRules, setSlaRules] = useState<Array<{ id: string; name: string; threshold_minutes: number; is_active: boolean }>>([])
+  const [savingRules, setSavingRules] = useState(false)
 
   // Notifications / Push
   const [pushPermission, setPushPermission] = useState<NotificationPermission | null>(null)
@@ -239,6 +256,10 @@ export default function SettingsPage() {
     load()
     fetchWebhookStatus()
     fetchQuoWebhookStatus()
+
+    // Load SLA rules
+    supabase.from('sla_rules').select('id, name, threshold_minutes, is_active').order('name')
+      .then(({ data }) => { if (data) setSlaRules(data as Array<{ id: string; name: string; threshold_minutes: number; is_active: boolean }>) })
 
     // Check current push permission state
     if ('Notification' in window) {
@@ -459,6 +480,73 @@ export default function SettingsPage() {
       setBanner({ type: 'error', message: String(err) })
     }
     setSendingDigest(false)
+  }
+
+  async function syncGhl() {
+    setSyncingGhl(true)
+    setGhlSyncResult(null)
+    try {
+      const res = await fetch('/api/sync/ghl', { method: 'POST' })
+      const json = await res.json()
+      if (json.ok) {
+        const { submissions, leads, inbound_items } = json.synced || {}
+        setGhlSyncResult({ ok: true, message: `${submissions ?? 0} new forms · ${leads ?? 0} leads · ${inbound_items ?? 0} inbox items` })
+        fetch('/api/health').then(r => r.json()).then(setHealthStatus).catch(() => {})
+      } else {
+        setGhlSyncResult({ ok: false, message: json.error || 'Sync failed' })
+      }
+    } catch (err) {
+      setGhlSyncResult({ ok: false, message: String(err) })
+    }
+    setSyncingGhl(false)
+  }
+
+  async function syncInstantly() {
+    setSyncingInstantly(true)
+    setInstantlySyncResult(null)
+    try {
+      const res = await fetch('/api/sync/instantly', { method: 'POST' })
+      const json = await res.json()
+      if (json.ok) {
+        const { total, positive, leads } = json.synced || {}
+        setInstantlySyncResult({ ok: true, message: `${total ?? 0} replies fetched · ${positive ?? 0} positive · ${leads ?? 0} leads created` })
+        fetch('/api/health').then(r => r.json()).then(setHealthStatus).catch(() => {})
+      } else {
+        setInstantlySyncResult({ ok: false, message: json.error || 'Sync failed' })
+      }
+    } catch (err) {
+      setInstantlySyncResult({ ok: false, message: String(err) })
+    }
+    setSyncingInstantly(false)
+  }
+
+  async function runSlaCheck() {
+    setCheckingSla(true)
+    setSlaCheckResult(null)
+    try {
+      const res = await fetch('/api/sla/check', { method: 'POST' })
+      const json = await res.json()
+      if (json.ok) {
+        setSlaCheckResult({
+          ok: true,
+          message: `${json.new_breaches} breach${json.new_breaches !== 1 ? 'es' : ''} · ${json.tasks_created} task${json.tasks_created !== 1 ? 's' : ''} · ${json.alerts_sent} alert${json.alerts_sent !== 1 ? 's' : ''} sent`
+        })
+      } else {
+        setSlaCheckResult({ ok: false, message: json.error || 'Check failed' })
+      }
+    } catch (err) {
+      setSlaCheckResult({ ok: false, message: String(err) })
+    }
+    setCheckingSla(false)
+  }
+
+  async function saveSlaRules() {
+    setSavingRules(true)
+    for (const rule of slaRules) {
+      await supabase.from('sla_rules').update({ threshold_minutes: rule.threshold_minutes, is_active: rule.is_active }).eq('id', rule.id)
+    }
+    setSavingRules(false)
+    setBanner({ type: 'success', message: 'SLA rules saved.' })
   }
 
   async function enablePushNotifications() {
@@ -894,6 +982,223 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Go High Level */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-accent-blue" />
+            <CardTitle>Go High Level (Website Forms)</CardTitle>
+            {healthStatus?.integrations.ghl && (
+              <Badge variant={healthStatus.integrations.ghl.token_set && healthStatus.integrations.ghl.location_id_set ? 'green' : 'amber'} dot>
+                {healthStatus.integrations.ghl.token_set && healthStatus.integrations.ghl.location_id_set ? 'Configured' : 'Setup required'}
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="p-3 rounded-xl bg-bg-elevated border border-white/[0.06]">
+              <p className="text-[11px] text-text-tertiary mb-1 font-medium uppercase tracking-wider">Token</p>
+              <p className={`text-xs font-mono ${healthStatus?.env.GHL_PRIVATE_INTEGRATION_TOKEN ? 'text-brand-green' : 'text-accent-red'}`}>
+                {healthStatus?.env.GHL_PRIVATE_INTEGRATION_TOKEN ? '✓ GHL_PRIVATE_INTEGRATION_TOKEN set' : '✗ GHL_PRIVATE_INTEGRATION_TOKEN missing'}
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-bg-elevated border border-white/[0.06]">
+              <p className="text-[11px] text-text-tertiary mb-1 font-medium uppercase tracking-wider">Location ID</p>
+              <p className={`text-xs font-mono ${healthStatus?.env.GHL_LOCATION_ID ? 'text-brand-green' : 'text-accent-red'}`}>
+                {healthStatus?.env.GHL_LOCATION_ID ? '✓ GHL_LOCATION_ID set' : '✗ GHL_LOCATION_ID missing'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <p className="text-[11px] text-text-tertiary font-mono">
+              Last sync: {healthStatus?.integrations.ghl?.last_sync
+                ? `${formatDistanceToNow(new Date(healthStatus.integrations.ghl.last_sync))} ago`
+                : 'never'}
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={syncingGhl}
+              icon={<RefreshCw className="w-3.5 h-3.5" />}
+              onClick={syncGhl}
+            >
+              {syncingGhl ? 'Syncing…' : 'Sync Now'}
+            </Button>
+            <a href="/inbox" className="text-[11px] text-accent-blue hover:underline">
+              View Inbox →
+            </a>
+          </div>
+          {ghlSyncResult && (
+            <p className={`text-[11px] font-mono ${ghlSyncResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+              {ghlSyncResult.ok ? '✓ ' : '✗ '}{ghlSyncResult.message}
+            </p>
+          )}
+          {healthStatus?.integrations.ghl?.last_error && (
+            <p className="text-[11px] font-mono text-accent-red">Last error: {healthStatus.integrations.ghl.last_error.slice(0, 120)}</p>
+          )}
+
+          <div className="p-3 rounded-lg bg-bg-elevated border border-white/[0.06] text-xs text-text-secondary space-y-1.5">
+            <p className="font-medium text-text-primary">Setup</p>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>In GHL → Settings → Private Integrations → create integration with <code className="font-mono text-accent-blue">contacts.readonly</code> and <code className="font-mono text-accent-blue">forms.readonly</code> scopes</li>
+              <li>Copy the token and add as <code className="font-mono text-accent-blue">GHL_PRIVATE_INTEGRATION_TOKEN</code> to Vercel env</li>
+              <li>Find your Location ID in GHL → Settings → Business Info → copy Location ID → add as <code className="font-mono text-accent-blue">GHL_LOCATION_ID</code></li>
+              <li>Click <b>Sync Now</b> — new form submissions will appear in the Inbox</li>
+            </ol>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Instantly */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-brand-green" />
+            <CardTitle>Instantly</CardTitle>
+            {healthStatus?.integrations.instantly && (
+              <Badge variant={healthStatus.integrations.instantly.api_key_set ? 'green' : 'amber'} dot>
+                {healthStatus.integrations.instantly.api_key_set ? 'API key set' : 'Setup required'}
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="p-3 rounded-xl bg-bg-elevated border border-white/[0.06] inline-block">
+            <p className={`text-xs font-mono ${healthStatus?.env.INSTANTLY_API_KEY ? 'text-brand-green' : 'text-accent-red'}`}>
+              {healthStatus?.env.INSTANTLY_API_KEY ? '✓ INSTANTLY_API_KEY set' : '✗ INSTANTLY_API_KEY missing'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <p className="text-[11px] text-text-tertiary font-mono">
+              Last sync: {healthStatus?.integrations.instantly?.last_sync
+                ? `${formatDistanceToNow(new Date(healthStatus.integrations.instantly.last_sync))} ago`
+                : 'never'}
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={syncingInstantly}
+              icon={<RefreshCw className="w-3.5 h-3.5" />}
+              onClick={syncInstantly}
+            >
+              {syncingInstantly ? 'Syncing…' : 'Sync Replies'}
+            </Button>
+            <a href="/inbox" className="text-[11px] text-accent-blue hover:underline">
+              View Inbox →
+            </a>
+          </div>
+          {instantlySyncResult && (
+            <p className={`text-[11px] font-mono ${instantlySyncResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+              {instantlySyncResult.ok ? '✓ ' : '✗ '}{instantlySyncResult.message}
+            </p>
+          )}
+          {healthStatus?.integrations.instantly?.last_error && (
+            <p className="text-[11px] font-mono text-accent-red">Last error: {healthStatus.integrations.instantly.last_error.slice(0, 120)}</p>
+          )}
+
+          <div className="p-3 rounded-lg bg-bg-elevated border border-white/[0.06] text-xs text-text-secondary space-y-1">
+            <p className="font-medium text-text-primary">Setup</p>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>In Instantly → Settings → API Keys → generate API key</li>
+              <li>Add as <code className="font-mono text-accent-blue">INSTANTLY_API_KEY</code> to Vercel env</li>
+              <li>Click <b>Sync Replies</b> — positive replies create leads + inbox items automatically</li>
+            </ol>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* SLA Configuration */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-accent-amber" />
+            <CardTitle>SLA Response Rules</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={checkingSla}
+              icon={<RefreshCw className="w-3.5 h-3.5" />}
+              onClick={runSlaCheck}
+            >
+              {checkingSla ? 'Checking…' : 'Run SLA Check Now'}
+            </Button>
+            <a href="/inbox" className="text-[11px] text-accent-blue hover:underline">View Inbox →</a>
+            {healthStatus?.records.sla_breaches_24h != null && (
+              <span className={`text-[11px] font-mono ${healthStatus.records.sla_breaches_24h > 0 ? 'text-accent-red' : 'text-brand-green'}`}>
+                {healthStatus.records.sla_breaches_24h} breach{healthStatus.records.sla_breaches_24h !== 1 ? 'es' : ''} in last 24h
+              </span>
+            )}
+          </div>
+          {slaCheckResult && (
+            <p className={`text-[11px] font-mono ${slaCheckResult.ok ? 'text-brand-green' : 'text-accent-red'}`}>
+              {slaCheckResult.ok ? '✓ ' : '✗ '}{slaCheckResult.message}
+            </p>
+          )}
+
+          {slaRules.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-text-secondary mb-2">Thresholds</p>
+              <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/[0.06] bg-white/[0.02]">
+                      <th className="text-left px-3 py-2 text-text-tertiary font-medium">Rule</th>
+                      <th className="text-left px-3 py-2 text-text-tertiary font-medium w-24">Window</th>
+                      <th className="px-3 py-2 w-16 text-text-tertiary font-medium text-center">Active</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {slaRules.map((rule, i) => (
+                      <tr key={rule.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02]">
+                        <td className="px-3 py-2 text-text-secondary">{rule.name}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min="1"
+                              max="10080"
+                              value={rule.threshold_minutes}
+                              onChange={e => setSlaRules(prev => prev.map((r, j) => j === i ? { ...r, threshold_minutes: parseInt(e.target.value) || r.threshold_minutes } : r))}
+                              className="w-16 px-2 py-1 text-xs font-mono bg-bg-elevated border border-white/[0.08] rounded text-text-primary"
+                            />
+                            <span className="text-text-tertiary text-[11px]">min</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => setSlaRules(prev => prev.map((r, j) => j === i ? { ...r, is_active: !r.is_active } : r))}
+                            className={`w-8 h-4 rounded-full transition-colors ${rule.is_active ? 'bg-brand-green' : 'bg-white/10'}`}
+                          >
+                            <span className={`block w-3 h-3 rounded-full bg-white shadow transition-transform mt-0.5 ${rule.is_active ? 'ml-4' : 'ml-0.5'}`} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-3">
+                <Button size="sm" loading={savingRules} icon={<Save className="w-3.5 h-3.5" />} onClick={saveSlaRules}>
+                  Save Rules
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <p className="text-[11px] text-text-tertiary">
+            SLA checks fire automatically when the Inbox page loads, or run manually above.
+            Breaches create tasks and send Telegram alerts to the management chat.
+          </p>
+        </CardContent>
+      </Card>
+
       {/* Telegram Bot Config */}
       <Card>
         <CardHeader>
@@ -1208,6 +1513,10 @@ Other commands:
                 { label: 'Jobs', count: healthStatus.records.jobs, color: 'text-accent-blue', href: '/jobs' },
                 { label: 'Invoices', count: healthStatus.records.invoices, color: 'text-accent-amber', href: '/financials' },
                 { label: 'Leads', count: healthStatus.records.leads, color: 'text-text-primary', href: '/clients' },
+                { label: 'Inbox (new)', count: healthStatus.records.inbound_items_new ?? 0, color: 'text-accent-red', href: '/inbox' },
+                { label: 'GHL Forms', count: healthStatus.records.ghl_submissions ?? 0, color: 'text-accent-blue', href: '/inbox' },
+                { label: 'Instantly', count: healthStatus.records.instantly_replies ?? 0, color: 'text-brand-green', href: '/inbox' },
+                { label: 'SLA (24h)', count: healthStatus.records.sla_breaches_24h ?? 0, color: 'text-accent-red', href: '/inbox' },
                 { label: 'Quo Calls', count: healthStatus.records.quo_calls, color: 'text-accent-blue', href: '/communications' },
                 { label: 'Quo Msgs', count: healthStatus.records.quo_messages, color: 'text-text-secondary', href: '/communications' },
                 { label: 'Employees', count: healthStatus.records.employees, color: 'text-text-secondary', href: '/team' },
@@ -1251,6 +1560,9 @@ Other commands:
               { key: 'VAPID_PRIVATE_KEY', value: healthStatus?.env.VAPID_PRIVATE_KEY },
               { key: 'NEXT_PUBLIC_VAPID_PUBLIC_KEY', value: healthStatus?.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY },
               { key: 'ANTHROPIC_API_KEY', value: healthStatus?.env.ANTHROPIC_API_KEY },
+              { key: 'GHL_PRIVATE_INTEGRATION_TOKEN', value: healthStatus?.env.GHL_PRIVATE_INTEGRATION_TOKEN },
+              { key: 'GHL_LOCATION_ID', value: healthStatus?.env.GHL_LOCATION_ID },
+              { key: 'INSTANTLY_API_KEY', value: healthStatus?.env.INSTANTLY_API_KEY },
             ] as Array<{ key: string; value: boolean | string | undefined; isUrl?: boolean }>).map(({ key, value, isUrl }) => (
               <div key={key} className="flex items-center justify-between py-1.5 border-b border-white/[0.04] last:border-0">
                 <span className="text-text-tertiary">{key}</span>
