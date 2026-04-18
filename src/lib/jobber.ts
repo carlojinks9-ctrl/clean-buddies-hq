@@ -142,7 +142,7 @@ export async function jobberQuery<T = unknown>(
 
 export const JOBS_QUERY = `
   query GetJobs($cursor: String) {
-    jobs(first: 50, after: $cursor) {
+    jobs(first: 25, after: $cursor) {
       nodes {
         id
         title
@@ -190,7 +190,7 @@ export const CLIENTS_QUERY = `
 
 export const INVOICES_QUERY = `
   query GetInvoices($cursor: String) {
-    invoices(first: 50, after: $cursor) {
+    invoices(first: 25, after: $cursor) {
       nodes {
         id
         invoiceNumber
@@ -201,7 +201,6 @@ export const INVOICES_QUERY = `
         receivedDate
         amounts {
           total
-          balance
         }
         jobs {
           nodes {

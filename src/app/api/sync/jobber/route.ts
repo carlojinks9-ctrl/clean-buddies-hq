@@ -80,7 +80,7 @@ export async function POST() {
 
   type SyncError = {
     section: 'clients' | 'jobs' | 'invoices'
-    category: 'auth' | 'graphql_schema' | 'db_write' | 'network' | 'unknown'
+    category: 'auth' | 'graphql_schema' | 'db_write' | 'network' | 'throttled' | 'unknown'
     message: string   // short, readable
     raw: string       // full error string for diagnosis
     hint: string
@@ -105,9 +105,9 @@ export async function POST() {
     // the throttle error also contains "graphql errors" and would be misclassified.
     if (r.includes('throttled') || r.includes('"code":"throttled"')) {
       return {
-        section, raw, category: 'unknown',
-        message: 'Jobber API rate limit hit (THROTTLED)',
-        hint: 'Too many requests in quick succession. The sync will succeed if retried after a few seconds. Jobber uses a leaky-bucket rate limiter.',
+        section, raw, category: 'throttled',
+        message: 'Jobber API rate limit hit (THROTTLED) — retry in ~10s',
+        hint: 'Jobber uses a leaky-bucket rate limiter. Page size has been reduced to 25 to lessen pressure. If this persists, wait 30s and sync again.',
       }
     }
     if (
@@ -180,21 +180,28 @@ export async function POST() {
 
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-  // Jobber uses a leaky-bucket rate limiter. Wrap each page query with one retry
-  // on THROTTLED so that a momentary burst doesn't fail an entire section.
+  // Jobber uses a leaky-bucket rate limiter. Retry up to 3 times on THROTTLED
+  // with exponential backoff: 4s → 8s → give up.
   async function jobberQueryWithRetry<T>(
     token: string, query: string, variables?: Record<string, unknown>
   ): Promise<T> {
-    try {
-      return await jobberQuery<T>(token, query, variables)
-    } catch (err) {
-      if (String(err).toLowerCase().includes('throttled')) {
-        console.warn('[sync/jobber] THROTTLED — waiting 3s then retrying once')
-        await sleep(3000)
+    const delays = [4000, 8000]
+    let lastErr: unknown
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      try {
         return await jobberQuery<T>(token, query, variables)
+      } catch (err) {
+        lastErr = err
+        if (String(err).toLowerCase().includes('throttled') && attempt < delays.length) {
+          const wait = delays[attempt]
+          console.warn(`[sync/jobber] THROTTLED — attempt ${attempt + 1}, waiting ${wait / 1000}s before retry`)
+          await sleep(wait)
+          continue
+        }
+        throw err
       }
-      throw err
     }
+    throw lastErr
   }
 
   // Helper: detect auth failures in caught errors and return a reconnect response
@@ -256,7 +263,7 @@ export async function POST() {
   }
 
   // ── Sync jobs ─────────────────────────────────────────────────────────────
-  await sleep(1500)  // let the leaky bucket refill after clients sync
+  await sleep(3000)  // let the leaky bucket refill after clients sync
   try {
     let cursor: string | null = null
     do {
@@ -380,10 +387,11 @@ export async function POST() {
       }
 
       for (const inv of nodes) {
-        // amounts.total / amounts.balance come from Invoice.amounts (InvoiceAmounts type)
-        // invoiceNet is a fallback Float scalar also on Invoice
+        // amounts.total is the only confirmed field on InvoiceAmounts.
+        // invoiceNet is a Float scalar fallback on Invoice itself.
+        // balance is not available in this API version — default to 0.
         const amountCents = Math.round(((inv.amounts?.total ?? inv.invoiceNet) || 0) * 100)
-        const balanceCents = Math.round((inv.amounts?.balance || 0) * 100)
+        const balanceCents = 0  // InvoiceAmounts.balance does not exist — removed
         // invoiceStatus replaces the removed `status` field
         const status = mapJobberInvoiceStatus(inv.invoiceStatus || '', inv.dueDate)
 
