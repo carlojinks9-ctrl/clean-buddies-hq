@@ -42,6 +42,7 @@ export async function GET() {
     const env = {
       JOBBER_CLIENT_ID: !!process.env.JOBBER_CLIENT_ID,
       JOBBER_CLIENT_SECRET: !!process.env.JOBBER_CLIENT_SECRET,
+      JOBBER_ICAL_URL: !!process.env.JOBBER_ICAL_URL,
       QUO_API_KEY: !!process.env.QUO_API_KEY,
       QUO_WEBHOOK_SIGNING_SECRET: !!process.env.QUO_WEBHOOK_SIGNING_SECRET,
       TELEGRAM_BOT_TOKEN: !!process.env.TELEGRAM_BOT_TOKEN,
@@ -77,6 +78,10 @@ export async function GET() {
           connected: !!tokenMap.get('google'),
           last_sync: settingsMap.get('last_google_sync') || null,
           env_ok: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET,
+        },
+        jobber_ical: {
+          configured: env.JOBBER_ICAL_URL,
+          last_sync: settingsMap.get('last_ical_sync') || null,
         },
         telegram: {
           token_set: env.TELEGRAM_BOT_TOKEN,

@@ -22,21 +22,46 @@ const typeStyles: Record<string, string> = {
   deadline:   'bg-accent-red/10 text-accent-red',
 }
 
+type ScheduleSource = 'jobber' | 'google' | 'none'
+
 export function SchedulePanel() {
   const [events, setEvents] = useState<ScheduleEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [connected, setConnected] = useState(true)
   const [fetchedAt, setFetchedAt] = useState<string | null>(null)
+  const [source, setSource] = useState<ScheduleSource>('none')
+  const [icalError, setIcalError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/sync/google')
+    // 1. Try Jobber iCal (primary)
+    fetch('/api/sync/ical')
       .then(r => r.json())
       .then(data => {
-        if (data.error === 'Google not connected') {
-          setConnected(false)
-        } else {
+        if (data.ok && data.source === 'jobber_ical') {
           setEvents(data.events || [])
           setFetchedAt(data.fetched_at || null)
+          setSource('jobber')
+          setConnected(true)
+        } else if (data.configured === false) {
+          // iCal not configured — fall back to Google
+          return fetch('/api/sync/google')
+            .then(r => r.json())
+            .then(gData => {
+              if (gData.error === 'Google not connected') {
+                setConnected(false)
+                setSource('none')
+              } else {
+                setEvents(gData.events || [])
+                setFetchedAt(gData.fetched_at || null)
+                setSource('google')
+                setConnected(true)
+              }
+            })
+        } else {
+          // iCal configured but fetch/parse failed
+          setIcalError(data.error || 'Failed to load Jobber schedule')
+          setConnected(false)
+          setSource('none')
         }
       })
       .catch(() => setConnected(false))
@@ -62,6 +87,12 @@ export function SchedulePanel() {
         <div className="flex items-center gap-2">
           <Calendar className="w-4 h-4 text-text-tertiary" />
           <CardTitle>Schedule</CardTitle>
+          {source === 'jobber' && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-green/10 text-brand-green font-medium">Jobber</span>
+          )}
+          {source === 'google' && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-blue/10 text-accent-blue font-medium">Google</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {loading ? (
@@ -70,9 +101,11 @@ export function SchedulePanel() {
             <span className="text-[11px] text-text-tertiary font-mono">
               {fetchedAt ? `synced ${format(new Date(fetchedAt), 'h:mm a')}` : format(new Date(), 'MMM d')}
             </span>
+          ) : icalError ? (
+            <span className="text-[11px] text-accent-red" title={icalError}>⚠ iCal error</span>
           ) : (
             <a href="/settings" className="text-[11px] text-accent-amber hover:underline">
-              Connect Google →
+              Connect →
             </a>
           )}
         </div>
@@ -95,8 +128,19 @@ export function SchedulePanel() {
         ) : !connected ? (
           <div className="px-4 py-6 text-center space-y-2">
             <Calendar className="w-6 h-6 text-text-tertiary mx-auto opacity-40" />
-            <p className="text-xs text-text-tertiary">Google Calendar not connected</p>
-            <a href="/settings" className="text-xs text-accent-blue hover:underline">Connect in Settings →</a>
+            {icalError ? (
+              <>
+                <p className="text-xs text-accent-red">Jobber schedule unavailable</p>
+                <p className="text-[11px] text-text-tertiary px-2">{icalError}</p>
+                <a href="/settings" className="text-xs text-accent-blue hover:underline">Check Settings →</a>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-text-tertiary">No schedule source connected</p>
+                <p className="text-[11px] text-text-tertiary">Set JOBBER_ICAL_URL or connect Google Calendar</p>
+                <a href="/settings" className="text-xs text-accent-blue hover:underline">Settings →</a>
+              </>
+            )}
           </div>
         ) : (
           <>
