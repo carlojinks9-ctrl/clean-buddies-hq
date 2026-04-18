@@ -190,15 +190,35 @@ export async function POST(request: NextRequest) {
 
   // ── /help ─────────────────────────────────────────────────────────────────
   if (text === '/help' || text.startsWith('/help@')) {
-    await replyToMessage(chatId, messageId,
-      `🤖 <b>CB Assistant — Commands</b>\n\n` +
-      `📦 <b>/supply [item] [qty] [job]</b>\n` +
-      `   Log a supply request\n` +
-      `   <i>Example: /supply Windex 4 Lanai Living</i>\n\n` +
-      `📊 <b>/status</b> — Today's snapshot\n` +
-      `💸 <b>/ar</b> — Outstanding AR summary\n` +
-      `❓ <b>/help</b> — Show this message`
-    )
+    const isCrewChat = chatId === crewChatId
+
+    if (isCrewChat || chatType === 'group' || chatType === 'supergroup') {
+      // Crew chat — supply request instructions only, no management commands
+      await replyToMessage(chatId, messageId,
+        `📦 <b>Supply Request Format</b>\n\n` +
+        `<code>/supply [item] [quantity + unit] [optional job name] [optional urgency]</code>\n\n` +
+        `<b>Examples:</b>\n` +
+        `<code>/supply pink stuff 1 bottle</code>\n` +
+        `<code>/supply ram board 5 rolls</code>\n` +
+        `<code>/supply trash bags 1 box model home 2</code>\n` +
+        `<code>/supply glass cleaner 2 bottles lanai building 5 3</code>\n\n` +
+        `<b>Urgency (optional, add at end):</b>\n` +
+        `3 = ASAP / needed today\n` +
+        `2 = needed this week\n` +
+        `1 = low urgency / restock\n\n` +
+        `Job name is optional — include it if you know which site needs it.`
+      )
+    } else {
+      // Management / DM — full command list
+      await replyToMessage(chatId, messageId,
+        `🤖 <b>CB Assistant — Commands</b>\n\n` +
+        `📦 <b>/supply [item] [qty + unit] [job] [urgency]</b>\n` +
+        `   Log a supply request\n\n` +
+        `📊 <b>/status</b> — Today's snapshot\n` +
+        `💸 <b>/ar</b> — Outstanding AR summary\n` +
+        `❓ <b>/help</b> — Show this message`
+      )
+    }
     return NextResponse.json({ ok: true })
   }
 
