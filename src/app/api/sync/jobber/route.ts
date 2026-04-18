@@ -161,6 +161,21 @@ export async function POST() {
     }
   }
 
+  // Per-section debug counters surfaced in the response payload
+  const debug = {
+    jobs_fetched: 0,
+    jobs_inserted: 0,
+    jobs_skipped_no_client: 0,
+    jobs_skipped_db_error: 0,
+    jobs_first_node_sample: null as unknown,
+    invoices_fetched: 0,
+    invoices_inserted: 0,
+    invoices_skipped_no_client: 0,
+    invoices_skipped_db_error: 0,
+    invoices_first_node_sample: null as unknown,
+    skip_reasons: [] as string[],
+  }
+
   const results = { clients: 0, jobs: 0, invoices: 0, errors: [] as SyncError[] }
 
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -246,43 +261,87 @@ export async function POST() {
     let cursor: string | null = null
     do {
       const data: any = await jobberQueryWithRetry(accessToken, JOBS_QUERY, { cursor })
-      console.log('[sync/jobber] jobs page:', JSON.stringify(data).slice(0, 500))
-      const nodes = data.jobs?.nodes || []
+      const nodes: any[] = data.jobs?.nodes || []
       cursor = data.jobs?.pageInfo?.hasNextPage ? data.jobs.pageInfo.endCursor : null
 
+      debug.jobs_fetched += nodes.length
+
+      // Capture first node to expose field names/values in debug output
+      if (debug.jobs_first_node_sample === null && nodes.length > 0) {
+        const sample = nodes[0]
+        debug.jobs_first_node_sample = {
+          id: sample.id,
+          title: sample.title,
+          jobStatus: sample.jobStatus,
+          total: sample.total,
+          client_id_from_api: sample.client?.id ?? null,
+          timesheetEntries_count: sample.timesheetEntries?.nodes?.length ?? sample.timeSheetEntries?.nodes?.length ?? 'field_missing',
+        }
+      }
+
       for (const j of nodes) {
-        // Burdened labor from timesheets (finalDuration is in seconds)
-        const totalHours = (j.timeSheetEntries?.nodes || []).reduce(
-          (sum: number, entry: any) => sum + (entry.finalDuration || 0) / 3600,
+        // Support both casing variants — schema says timesheetEntries (lowercase s)
+        const tsEntries = j.timesheetEntries?.nodes ?? j.timeSheetEntries?.nodes ?? []
+        // finalDuration is Seconds scalar
+        const totalHours = tsEntries.reduce(
+          (sum: number, entry: any) => sum + (Number(entry.finalDuration) || 0) / 3600,
           0
         )
         const laborCents = Math.round(totalHours * BURDENED_LABOR_RATE * 100)
-        // Job.total is a Float scalar (not an object) per Jobber schema
-        const revenueCents = Math.round((j.total || 0) * 100)
+        // Job.total is a Float scalar per schema
+        const revenueCents = Math.round((Number(j.total) || 0) * 100)
         const margin = grossMargin(revenueCents, laborCents)
 
-        const { data: client } = await db
+        const clientJobberId = j.client?.id ?? null
+
+        if (!clientJobberId) {
+          debug.jobs_skipped_no_client++
+          debug.skip_reasons.push(`job ${j.id} (${j.title}): client.id missing in API response`)
+          console.warn(`[sync/jobber] Job ${j.id} skipped — j.client.id is null/undefined`)
+          continue
+        }
+
+        const { data: clientRow, error: clientLookupErr } = await db
           .from('clients')
           .select('id')
-          .eq('jobber_id', j.client?.id)
-          .single()
+          .eq('jobber_id', clientJobberId)
+          .maybeSingle()  // maybeSingle returns null without error when no row found
 
-        if (client) {
-          const { error } = await db.from('jobs').upsert({
-            jobber_id: j.id,
-            title: j.title,
-            job_number: j.jobNumber || null,
-            client_id: client.id,
-            status: mapJobberJobStatus(j.jobStatus || ''),
-            contract_value_cents: revenueCents,
-            burdened_labor_cents: laborCents,
-            total_hours: totalHours,
-            gross_margin: margin,
-            // startAt / completedAt are now in the query
-            start_date: j.startAt ? j.startAt.split('T')[0] : (j.createdAt ? j.createdAt.split('T')[0] : null),
-            end_date: j.completedAt ? j.completedAt.split('T')[0] : null,
-          }, { onConflict: 'jobber_id' })
-          if (!error) results.jobs++
+        if (clientLookupErr) {
+          debug.jobs_skipped_no_client++
+          debug.skip_reasons.push(`job ${j.id}: client DB lookup error — ${clientLookupErr.message}`)
+          console.error(`[sync/jobber] Job ${j.id} — client lookup DB error:`, clientLookupErr.message)
+          continue
+        }
+
+        if (!clientRow) {
+          debug.jobs_skipped_no_client++
+          debug.skip_reasons.push(`job ${j.id} (${j.title}): no client row found for jobber_id=${clientJobberId}`)
+          console.warn(`[sync/jobber] Job ${j.id} skipped — clients table has no row with jobber_id=${clientJobberId}`)
+          continue
+        }
+
+        const { error: upsertErr } = await db.from('jobs').upsert({
+          jobber_id: j.id,
+          title: j.title || 'Untitled Job',
+          job_number: j.jobNumber || null,
+          client_id: clientRow.id,
+          status: mapJobberJobStatus(j.jobStatus || ''),
+          contract_value_cents: revenueCents,
+          burdened_labor_cents: laborCents,
+          total_hours: totalHours,
+          gross_margin: margin,
+          start_date: j.startAt ? j.startAt.split('T')[0] : (j.createdAt ? j.createdAt.split('T')[0] : null),
+          end_date: j.completedAt ? j.completedAt.split('T')[0] : null,
+        }, { onConflict: 'jobber_id' })
+
+        if (upsertErr) {
+          debug.jobs_skipped_db_error++
+          debug.skip_reasons.push(`job ${j.id}: DB upsert failed — ${upsertErr.message}`)
+          console.error(`[sync/jobber] Job ${j.id} upsert error:`, upsertErr.message)
+        } else {
+          debug.jobs_inserted++
+          results.jobs++
         }
       }
     } while (cursor)
@@ -304,6 +363,22 @@ export async function POST() {
       const nodes = data.invoices?.nodes || []
       cursor = data.invoices?.pageInfo?.hasNextPage ? data.invoices.pageInfo.endCursor : null
 
+      debug.invoices_fetched += nodes.length
+
+      // Capture first node to expose field names/values in debug output
+      if (debug.invoices_first_node_sample === null && nodes.length > 0) {
+        const s = nodes[0]
+        debug.invoices_first_node_sample = {
+          id: s.id,
+          invoiceNumber: s.invoiceNumber,
+          invoiceStatus: s.invoiceStatus,
+          invoiceNet: s.invoiceNet,
+          amounts: s.amounts,
+          jobs_nodes_count: s.jobs?.nodes?.length ?? 'field_missing',
+          first_job_client_id: s.jobs?.nodes?.[0]?.client?.id ?? null,
+        }
+      }
+
       for (const inv of nodes) {
         // amounts.total / amounts.balance come from Invoice.amounts (InvoiceAmounts type)
         // invoiceNet is a fallback Float scalar also on Invoice
@@ -316,42 +391,66 @@ export async function POST() {
         // Invoice.jobs is a connection (JobConnection); nodes are Job objects with client
         const firstLinkedJob = inv.jobs?.nodes?.[0] ?? null
         const clientJobberId = firstLinkedJob?.client?.id ?? null
-        let client: { id: string } | null = null
-        if (clientJobberId) {
-          const { data: c } = await db
-            .from('clients')
-            .select('id')
-            .eq('jobber_id', clientJobberId)
-            .single()
-          client = c ?? null
+
+        if (!clientJobberId) {
+          debug.invoices_skipped_no_client++
+          debug.skip_reasons.push(`invoice ${inv.id} (${inv.invoiceNumber}): no linked job with client in API response`)
+          console.warn(`[sync/jobber] Invoice ${inv.id} skipped — no linked job client`)
+          continue
         }
 
-        // Resolve FK: job (optional)
+        const { data: clientRow, error: clientLookupErr } = await db
+          .from('clients')
+          .select('id')
+          .eq('jobber_id', clientJobberId)
+          .maybeSingle()
+
+        if (clientLookupErr) {
+          debug.invoices_skipped_no_client++
+          debug.skip_reasons.push(`invoice ${inv.id}: client DB lookup error — ${clientLookupErr.message}`)
+          console.error(`[sync/jobber] Invoice ${inv.id} — client lookup error:`, clientLookupErr.message)
+          continue
+        }
+
+        if (!clientRow) {
+          debug.invoices_skipped_no_client++
+          debug.skip_reasons.push(`invoice ${inv.id} (${inv.invoiceNumber}): no client row for jobber_id=${clientJobberId}`)
+          console.warn(`[sync/jobber] Invoice ${inv.id} skipped — clients table has no row with jobber_id=${clientJobberId}`)
+          continue
+        }
+
+        // Resolve FK: job (optional) — use maybeSingle so missing job doesn't throw
         let jobId: string | null = null
         if (firstLinkedJob?.id) {
-          const { data: job } = await db
+          const { data: jobRow } = await db
             .from('jobs')
             .select('id')
             .eq('jobber_id', firstLinkedJob.id)
-            .single()
-          jobId = job?.id ?? null
+            .maybeSingle()
+          jobId = jobRow?.id ?? null
         }
 
-        if (client) {
-          // receivedDate replaces the removed paidDate field
-          const { error } = await db.from('invoices').upsert({
-            jobber_id: inv.id,
-            invoice_number: inv.invoiceNumber || `JB-${inv.id.slice(-8).toUpperCase()}`,
-            client_id: client.id,
-            job_id: jobId,
-            amount_cents: amountCents,
-            balance_cents: balanceCents,
-            status,
-            issue_date: inv.issuedDate || null,
-            due_date: inv.dueDate || null,
-            paid_date: status === 'paid' ? (inv.receivedDate || null) : null,
-          }, { onConflict: 'jobber_id' })
-          if (!error) results.invoices++
+        // receivedDate replaces the removed paidDate field
+        const { error: upsertErr } = await db.from('invoices').upsert({
+          jobber_id: inv.id,
+          invoice_number: inv.invoiceNumber || `JB-${inv.id.slice(-8).toUpperCase()}`,
+          client_id: clientRow.id,
+          job_id: jobId,
+          amount_cents: amountCents,
+          balance_cents: balanceCents,
+          status,
+          issue_date: inv.issuedDate || null,
+          due_date: inv.dueDate || null,
+          paid_date: status === 'paid' ? (inv.receivedDate || null) : null,
+        }, { onConflict: 'jobber_id' })
+
+        if (upsertErr) {
+          debug.invoices_skipped_db_error++
+          debug.skip_reasons.push(`invoice ${inv.id}: DB upsert failed — ${upsertErr.message}`)
+          console.error(`[sync/jobber] Invoice ${inv.id} upsert error:`, upsertErr.message)
+        } else {
+          debug.invoices_inserted++
+          results.invoices++
         }
       }
     } while (cursor)
@@ -400,6 +499,7 @@ export async function POST() {
       `${results.jobs} job${results.jobs !== 1 ? 's' : ''} → jobs table (contract value, margin, timesheets)`,
       `${results.invoices} invoice${results.invoices !== 1 ? 's' : ''} → invoices table (amount, balance, status)`,
     ].join(' · '),
+    debug,
     errors: results.errors,
     synced_at: syncedAt,
   })
