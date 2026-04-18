@@ -118,17 +118,52 @@ export async function POST(request: NextRequest) {
         client_id: clientId,
       })
 
-      // Telegram alert for flagged calls
-      if (flagData.is_flagged) {
+      // Immediately surface missed calls in the unified inbox
+      if (direction === 'inbound' && QUO_MISSED_STATUSES.has(status)) {
+        const SLA_MINUTES = 10
+        const slaDeadline = new Date(new Date(createdAt).getTime() + SLA_MINUTES * 60_000).toISOString()
+        const minAgo = Math.floor((Date.now() - new Date(createdAt).getTime()) / 60_000)
+        await db.from('inbound_items').upsert({
+          source: 'quo_call',
+          source_id: quoId,
+          contact_name: contactName,
+          phone: externalPhone,
+          subject: `Missed call — ${displayName}`,
+          body_preview: flagData.flag_reason ?? `${status} · ${minAgo}m ago — needs callback`,
+          urgency: 'high',
+          tags: Array.from(new Set(['missed-call', 'callback-needed', ...(flagData.aiTags ?? [])])),
+          status: 'new',
+          sla_deadline: slaDeadline,
+          sla_breached: minAgo > SLA_MINUTES,
+          sla_rule: 'Quo Missed Call',
+        }, { onConflict: 'source,source_id', ignoreDuplicates: false })
+
+        // Telegram alert for ALL missed calls (not just AI-flagged ones)
         const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
-        if (mgmtChat) {
+        if (mgmtChat && process.env.TELEGRAM_BOT_TOKEN) {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
           await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: mgmtChat,
-              text: `🚨 <b>Flagged Call</b>\n\nFrom: <b>${displayName}</b> (${direction})\n${flagData.flag_reason ? `Reason: ${flagData.flag_reason}` : ''}\n\n<a href="${appUrl}/communications">View in Communications →</a>`,
+              text: `📵 <b>Missed Call</b>\n\nFrom: <b>${displayName}</b>${!clientId ? ' (unknown)' : ''}\nStatus: ${status}\n\nCallback SLA: ${SLA_MINUTES} min\n<a href="${appUrl}/inbox">View Inbox →</a>`,
+              parse_mode: 'HTML',
+              disable_web_page_preview: true,
+            }),
+          }).catch(e => console.error('[quo/webhook] Telegram notify error:', e))
+        }
+      } else if (flagData.is_flagged) {
+        // Non-missed flagged call (e.g., concerning conversation)
+        const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+        if (mgmtChat && process.env.TELEGRAM_BOT_TOKEN) {
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
+          await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: mgmtChat,
+              text: `🚨 <b>Flagged Call</b>\n\nFrom: <b>${displayName}</b> (${direction})\n${flagData.flag_reason ? `Reason: ${flagData.flag_reason}` : ''}\n\n<a href="${appUrl}/inbox">View in Inbox →</a>`,
               parse_mode: 'HTML',
               disable_web_page_preview: true,
             }),
@@ -207,19 +242,40 @@ export async function POST(request: NextRequest) {
           metadata: { quo_id: quoId, direction, phone: externalPhone, is_flagged: flagData.is_flagged },
           client_id: clientId,
         })
-      }
 
-      // Telegram alert for flagged messages
-      if (flagData.is_flagged) {
+        // Immediately surface ALL inbound messages in the unified inbox
+        const SLA_MINUTES = 30
+        const msgCreatedAt = obj.createdAt ? String(obj.createdAt) : new Date().toISOString()
+        const slaDeadline = new Date(new Date(msgCreatedAt).getTime() + SLA_MINUTES * 60_000).toISOString()
+        const minAgo = Math.floor((Date.now() - new Date(msgCreatedAt).getTime()) / 60_000)
+        const urgency = flagData.is_flagged ? 'high' : (minAgo > SLA_MINUTES ? 'high' : 'medium')
+
+        await db.from('inbound_items').upsert({
+          source: 'quo_message',
+          source_id: quoId,
+          contact_name: contactName,
+          phone: externalPhone,
+          subject: `Text from ${contactName ?? externalPhone}`,
+          body_preview: body ? body.slice(0, 150) : 'Inbound SMS',
+          urgency,
+          tags: ['inbound-text', 'reply-needed', ...(flagData.is_flagged ? ['flagged'] : [])],
+          status: 'new',
+          sla_deadline: slaDeadline,
+          sla_breached: minAgo > SLA_MINUTES,
+          sla_rule: 'Quo Inbound Text',
+        }, { onConflict: 'source,source_id', ignoreDuplicates: false })
+
+        // Telegram alert for all inbound messages
         const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
-        if (mgmtChat) {
+        if (mgmtChat && process.env.TELEGRAM_BOT_TOKEN) {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
+          const preview = body ? body.slice(0, 100) : '(no body)'
           await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: mgmtChat,
-              text: `💬 <b>Flagged Message</b>\n\nFrom: <b>${contactName ?? externalPhone}</b>\n${flagData.flag_reason ? `Reason: ${flagData.flag_reason}` : ''}\n\n<a href="${appUrl}/communications">View in Communications →</a>`,
+              text: `${flagData.is_flagged ? '🚨' : '💬'} <b>Inbound Text${flagData.is_flagged ? ' — Flagged' : ''}</b>\n\nFrom: <b>${contactName ?? externalPhone}</b>\n"${preview}"\n\nReply SLA: ${SLA_MINUTES} min\n<a href="${appUrl}/inbox">View Inbox →</a>`,
               parse_mode: 'HTML',
               disable_web_page_preview: true,
             }),

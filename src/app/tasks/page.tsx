@@ -363,7 +363,7 @@ export default function TasksPage() {
           <button
             onClick={() => cycleStatus(task)}
             className="mt-0.5 flex-shrink-0 hover:scale-110 transition-transform"
-            title={`Mark as ${task.status === 'todo' ? 'in progress' : task.status === 'in_progress' ? 'done' : 'todo'}`}
+            title={task.status === 'done' ? 'Reopen task' : task.status === 'in_progress' ? 'Mark done' : 'Start task'}
           >
             <StatusIcon className={clsx('w-4 h-4', {
               'text-text-tertiary hover:text-accent-amber': task.status === 'todo',

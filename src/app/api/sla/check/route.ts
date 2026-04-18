@@ -91,26 +91,34 @@ async function runCheck() {
       if (inboundItemId) {
         newBreaches++
 
-        // Create task
-        const { data: task } = await db
-          .from('tasks')
-          .insert({
-            title: `Call back: ${call.contact_name ?? call.from_number}`,
-            description: `Missed Quo call ${call.minutes_ago} min ago — SLA breached (${getThreshold('missed_call', 10)} min threshold)`,
-            category: 'sales',
-            priority: 'urgent',
-            status: 'todo',
-            assignee: 'carlo',
-          })
-          .select('id')
+        // Only create task if this inbound_item doesn't already have one
+        const { data: existingItem } = await db
+          .from('inbound_items')
+          .select('task_id')
+          .eq('id', inboundItemId)
           .single()
 
-        if (task) {
-          tasksCreated++
-          await db.from('inbound_items').update({ task_id: task.id }).eq('id', inboundItemId)
+        if (!existingItem?.task_id) {
+          const { data: task } = await db
+            .from('tasks')
+            .insert({
+              title: `Call back: ${call.contact_name ?? call.from_number}`,
+              description: `Missed Quo call ${call.minutes_ago} min ago — SLA breached (${getThreshold('missed_call', 10)} min threshold)`,
+              category: 'sales',
+              priority: 'urgent',
+              status: 'todo',
+              assignee: 'carlo',
+            })
+            .select('id')
+            .single()
+
+          if (task) {
+            tasksCreated++
+            await db.from('inbound_items').update({ task_id: task.id }).eq('id', inboundItemId)
+          }
         }
 
-        // Telegram alert
+        // Telegram alert — dedup per call id (not just per source)
         const alerted = await sendSlaAlertOnce(db, 'quo_call', call.id, async () => {
           await sendSlaAlert(
             `🔴 <b>SLA BREACH — Missed Call</b>\n\nNo callback in ${call.minutes_ago} min\nFrom: <b>${call.contact_name ?? call.from_number}</b>\n\n<a href="${appUrl}/inbox">View Callback Queue →</a>`
@@ -171,16 +179,7 @@ async function runCheck() {
     })
 
     for (const sub of ghlPending) {
-      await db.from('sla_breaches').insert({
-        source: 'ghl',
-        rule_name: 'GHL Form Submission',
-        threshold_minutes: getThreshold('form_submit', 15),
-        actual_minutes: sub.minutes_ago,
-        telegram_sent: false,
-        task_created: false,
-      })
       newBreaches++
-
       const alerted = await sendSlaAlertOnce(db, 'ghl', sub.id, async () => {
         await sendSlaAlert(
           `🔴 <b>SLA BREACH — Website Form</b>\n\nNot actioned in ${sub.minutes_ago} min\nFrom: <b>${sub.contact_name ?? 'Unknown'}</b>\n${sub.service_type ? `Service: ${sub.service_type}` : ''}\n\n<a href="${appUrl}/inbox">View Inbox →</a>`
@@ -225,7 +224,7 @@ async function runCheck() {
   }
 }
 
-// De-duplicate: don't fire the same alert twice in 1 hour for the same source+id
+// De-duplicate: don't fire the same alert twice in 1 hour for the same source+sourceId
 async function sendSlaAlertOnce(
   db: ReturnType<typeof createServerClient>,
   source: string,
@@ -233,17 +232,20 @@ async function sendSlaAlertOnce(
   sendFn: () => Promise<void>
 ): Promise<boolean> {
   const recentCutoff = new Date(Date.now() - 60 * 60_000).toISOString()
-  const { count } = await db
+  // Check if we already logged a breach for this specific item in the last hour
+  const { data: existing } = await db
     .from('sla_breaches')
-    .select('id', { count: 'exact', head: true })
+    .select('id')
     .eq('source', source)
+    .eq('rule_name', `${source}:${sourceId}`)
     .gte('created_at', recentCutoff)
+    .limit(1)
 
-  if (count && count > 0) return false  // already alerted recently
+  if (existing && existing.length > 0) return false  // already alerted for this specific item
 
   await db.from('sla_breaches').insert({
     source,
-    rule_name: `${source}_sla`,
+    rule_name: `${source}:${sourceId}`,  // encode source_id into rule_name for dedup
     threshold_minutes: 0,
     telegram_sent: true,
     task_created: false,

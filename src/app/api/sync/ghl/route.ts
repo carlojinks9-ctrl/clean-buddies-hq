@@ -114,6 +114,7 @@ async function runSync() {
 
         // Create a lead
         const estimatedValue = estimateValue(tags, fields.message)
+        const nextAction = buildNextAction(serviceType, tags, urgency, fields.phone)
         const { data: lead, error: leadError } = await db
           .from('leads')
           .insert({
@@ -128,7 +129,7 @@ async function runSync() {
             source: 'ghl',
             urgency,
             owner: 'carlo',
-            next_action: 'Follow up with new website lead',
+            next_action: nextAction,
             next_action_due: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // 15 min SLA
             estimated_value_cents: estimatedValue,
             tags,
@@ -227,6 +228,23 @@ async function runSync() {
 
     return NextResponse.json({ ok: false, error: errMsg }, { status: 200 })
   }
+}
+
+function buildNextAction(serviceType: string, tags: string[], urgency: string, phone: string | null): string {
+  const hasPhone = !!phone
+  if (urgency === 'high') {
+    return hasPhone ? `Call ${phone} — urgent inquiry for ${serviceType}` : `Reply by email — urgent ${serviceType} inquiry`
+  }
+  if (tags.includes('builder') || tags.includes('commercial')) {
+    return `Call to schedule walkthrough — ${serviceType}`
+  }
+  if (tags.includes('post-construction')) {
+    return `Send post-construction pricing and availability`
+  }
+  if (serviceType && serviceType !== 'General Inquiry') {
+    return `Send estimate for ${serviceType}`
+  }
+  return hasPhone ? `Call to qualify — new website lead` : `Reply with pricing info`
 }
 
 function detectServiceType(fields: { message: string | null; service_type: string | null }): string {

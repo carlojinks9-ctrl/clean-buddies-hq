@@ -87,7 +87,7 @@ async function runSync() {
               status: 'contacted',
               urgency: 'high',
               owner: 'carlo',
-              next_action: `Reply to Instantly outreach response`,
+              next_action: buildInstantlyNextAction(tags, email.subject),
               next_action_due: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(), // 8h SLA
               tags: [...tags, 'cold-outreach-reply'],
               pipeline_stage: 'contacted',
@@ -180,6 +180,23 @@ async function runSync() {
     )
     return NextResponse.json({ ok: false, error: errMsg }, { status: 200 })
   }
+}
+
+function buildInstantlyNextAction(tags: string[], subject: string | null): string {
+  const sub = (subject || '').toLowerCase()
+  if (tags.includes('estimate-request') || /estimate|quote|price|pricing/.test(sub)) {
+    return 'Send estimate — expressed interest in pricing'
+  }
+  if (tags.includes('scheduling') || /schedule|meeting|call|available|availability/.test(sub)) {
+    return 'Schedule a call or walkthrough'
+  }
+  if (tags.includes('builder') || tags.includes('property-manager')) {
+    return 'Call to discuss ongoing cleaning contract'
+  }
+  if (tags.includes('referral')) {
+    return 'Follow up — came via referral, high intent'
+  }
+  return 'Reply to cold outreach response — warm lead'
 }
 
 function extractName(email: string): string {
