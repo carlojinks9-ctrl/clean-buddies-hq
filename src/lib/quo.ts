@@ -157,11 +157,20 @@ export function formatDuration(seconds: number | null | undefined): string {
   return s === 0 ? `${m}m` : `${m}m ${s}s`
 }
 
+// Statuses the Quo REST API returns for calls (used in sync route, not webhook)
+// Note: the webhook call.completed event always has status="completed" — use answeredAt to detect misses
 export const QUO_MISSED_STATUSES = new Set(['missed', 'no-answer', 'busy', 'voicemail'])
 
+// All supported Quo webhook event types (configure these in Quo Settings → Webhooks)
+// Note: webhooks must be created manually in the Quo app — there is no public API for webhook registration
 export const QUO_WEBHOOK_EVENTS = [
+  'call.ringing',
   'call.completed',
+  'call.recording.completed',
   'call.summary.completed',
+  'call.transcript.completed',
   'message.received',
-  'message.sent',
+  'message.delivered',    // outbound delivery confirmation (NOT message.sent)
+  'contact.updated',
+  'contact.deleted',
 ]
