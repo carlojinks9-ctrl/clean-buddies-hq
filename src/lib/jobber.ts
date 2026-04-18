@@ -162,8 +162,8 @@ export const JOBS_QUERY = `
           nodes {
             id
             finalDuration
-            employee { name }
-            startedAt
+             { name }
+            startAt
           }
         }
       }
