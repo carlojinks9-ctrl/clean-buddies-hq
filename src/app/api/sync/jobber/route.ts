@@ -223,7 +223,7 @@ export async function POST() {
 
       for (const j of nodes) {
         // Burdened labor from timesheets (finalDuration is in seconds)
-        const totalHours = (j.timesheetEntries?.nodes || []).reduce(
+        const totalHours = (j.timeSheetEntries?.nodes || []).reduce(
           (sum: number, entry: any) => sum + (entry.finalDuration || 0) / 3600,
           0
         )
