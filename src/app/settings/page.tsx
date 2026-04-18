@@ -103,6 +103,7 @@ export default function SettingsPage() {
   const [showJobberErrors, setShowJobberErrors] = useState(false)
   const [debuggingJobber, setDebuggingJobber] = useState(false)
   const [debugResult, setDebugResult] = useState<{ ok: boolean; detail: string } | null>(null)
+  const [syncDebug, setSyncDebug] = useState<Record<string, unknown> | null>(null)
 
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(true)
@@ -276,6 +277,7 @@ export default function SettingsPage() {
     setJobberErrors([])
     setShowJobberErrors(false)
     setDebugResult(null)
+    setSyncDebug(null)
     try {
       const res = await fetch('/api/sync/jobber', { method: 'POST' })
       const json = await res.json()
@@ -288,11 +290,12 @@ export default function SettingsPage() {
           setBanner({ type: 'error', message: '⚠️ Jobber reconnection required — use the Disconnect button then Connect again.' })
         }
       } else {
-        const { synced, synced_at } = json
+        const { synced, synced_at, debug } = json
         setLastJobberSync(synced_at)
         const errs: typeof jobberErrors = synced.errors || []
         setJobberErrors(errs)
         if (errs.length > 0) setShowJobberErrors(true)
+        if (debug) setSyncDebug(debug)
         const hasRealData = synced.clients > 0 || synced.jobs > 0 || synced.invoices > 0
         setSyncResult({
           ok: hasRealData || errs.length === 0,
@@ -734,6 +737,7 @@ export default function SettingsPage() {
                                   graphql_schema: 'border-accent-amber/30 bg-accent-amber/5',
                                   db_write: 'border-accent-blue/30 bg-accent-blue/5',
                                   network: 'border-white/10 bg-white/[0.03]',
+                                  throttled: 'border-accent-amber/30 bg-accent-amber/5',
                                   unknown: 'border-white/10 bg-white/[0.03]',
                                 }[e.category] || 'border-white/10 bg-white/[0.03]'
                                 const catLabel = {
@@ -741,6 +745,7 @@ export default function SettingsPage() {
                                   graphql_schema: '🟡 SCHEMA',
                                   db_write: '🔵 DB WRITE',
                                   network: '⚪ NETWORK',
+                                  throttled: '🟡 THROTTLED',
                                   unknown: '⚪ UNKNOWN',
                                 }[e.category] || e.category.toUpperCase()
                                 return (
@@ -783,6 +788,46 @@ export default function SettingsPage() {
                             </div>
                           )}
                         </div>
+                      )}
+
+                      {/* Jobber: sync debug panel — shows skip reasons when invoices = 0 */}
+                      {isJobber && syncDebug && (syncDebug.invoices_fetched as number) >= 0 && (
+                        <details className="mt-2">
+                          <summary className="text-[11px] text-text-tertiary cursor-pointer hover:text-text-secondary select-none">
+                            Sync debug — jobs: {String(syncDebug.jobs_fetched ?? '?')} fetched / {String(syncDebug.jobs_inserted ?? '?')} inserted · invoices: {String(syncDebug.invoices_fetched ?? '?')} fetched / {String(syncDebug.invoices_inserted ?? '?')} inserted
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {(syncDebug.skip_reasons as string[])?.length > 0 && (
+                              <div className="rounded-lg border border-accent-amber/20 bg-accent-amber/5 p-3">
+                                <p className="text-[10px] font-mono font-bold text-accent-amber mb-1.5">SKIP REASONS ({(syncDebug.skip_reasons as string[]).length})</p>
+                                <ul className="space-y-1">
+                                  {(syncDebug.skip_reasons as string[]).slice(0, 20).map((r, i) => (
+                                    <li key={i} className="text-[10px] font-mono text-text-secondary break-all">{r}</li>
+                                  ))}
+                                  {(syncDebug.skip_reasons as string[]).length > 20 && (
+                                    <li className="text-[10px] text-text-tertiary">…and {(syncDebug.skip_reasons as string[]).length - 20} more</li>
+                                  )}
+                                </ul>
+                              </div>
+                            )}
+                            {!!syncDebug.invoices_first_node_sample && (
+                              <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                <p className="text-[10px] font-mono font-bold text-text-tertiary mb-1.5">INVOICE SAMPLE (first node)</p>
+                                <pre className="text-[10px] font-mono text-text-secondary whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+                                  {JSON.stringify(syncDebug.invoices_first_node_sample as Record<string, unknown>, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                            {!!syncDebug.jobs_first_node_sample && (
+                              <details className="text-[10px]">
+                                <summary className="text-text-tertiary cursor-pointer hover:text-text-secondary select-none">Job sample (first node)</summary>
+                                <pre className="mt-1.5 font-mono text-text-secondary whitespace-pre-wrap break-all max-h-28 overflow-y-auto">
+                                  {JSON.stringify(syncDebug.jobs_first_node_sample as Record<string, unknown>, null, 2)}
+                                </pre>
+                              </details>
+                            )}
+                          </div>
+                        </details>
                       )}
 
                       {/* Jobber: debug button even when no errors (initial state) */}

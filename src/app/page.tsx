@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { createServerClient } from '@/lib/supabase'
 import { KpiCard } from '@/components/dashboard/KpiCard'
 import { ActiveJobsPanel } from '@/components/dashboard/ActiveJobsPanel'

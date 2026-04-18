@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import Link from 'next/link'
 import { createServerClient } from '@/lib/supabase'
 import { Card } from '@/components/ui/Card'
@@ -11,16 +13,13 @@ import { format } from 'date-fns'
 import type { Job } from '@/types'
 
 async function getJobs() {
-  try {
-    const db = createServerClient()
-    const { data } = await db
-      .from('jobs')
-      .select('*, client:clients(id, name, company_name)')
-      .order('updated_at', { ascending: false })
-    return (data || []) as Job[]
-  } catch {
-    return []
-  }
+  const db = createServerClient()
+  const { data, error } = await db
+    .from('jobs')
+    .select('*, client:clients(id, name, company_name)')
+    .order('updated_at', { ascending: false })
+  if (error) console.error('[jobs/page] getJobs error:', error.message)
+  return (data || []) as Job[]
 }
 
 const statusMeta: Record<string, { variant: any; label: string }> = {
