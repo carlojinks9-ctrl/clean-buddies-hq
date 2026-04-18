@@ -147,7 +147,7 @@ export const JOBS_QUERY = `
         id
         title
         jobNumber
-        total { value currency }
+        total
         jobStatus
         startAt
         completedAt
@@ -158,7 +158,7 @@ export const JOBS_QUERY = `
           name
           companyName
         }
-        timesheetEntries(first: 100) {
+        timeSheetEntries(first: 100) {
           nodes {
             id
             finalDuration
@@ -195,9 +195,7 @@ export const INVOICES_QUERY = `
       nodes {
         id
         invoiceNumber
-        total { value currency }
-        balance { value currency }
-        status
+        total
         dueDate
         issuedDate
         client {
@@ -205,7 +203,7 @@ export const INVOICES_QUERY = `
           name
           companyName
         }
-        job { id title }
+        jobs { nodes { id title } }
       }
       pageInfo { hasNextPage endCursor }
     }
