@@ -3,8 +3,15 @@
  * Uses the Bot API directly (no polling — webhook-driven).
  */
 
+// Hardcoded fallbacks — used when env vars are empty (e.g. on first deploy)
+const MGMT_CHAT_ID_FALLBACK = '-5218394283'
+const CREW_CHAT_ID_FALLBACK = '-5055634372'
+
+export const MGMT_CHAT_ID = process.env.TELEGRAM_MANAGEMENT_CHAT_ID || MGMT_CHAT_ID_FALLBACK
+export const CREW_CHAT_ID = process.env.TELEGRAM_CREW_CHAT_ID || CREW_CHAT_ID_FALLBACK
+
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`
-const MGMT_CHAT = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+const MGMT_CHAT = MGMT_CHAT_ID
 
 async function sendMessage(chatId: string, text: string, parseMode: 'HTML' | 'Markdown' = 'HTML') {
   const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
@@ -170,16 +177,22 @@ export async function replyToMessage(chatId: string, messageId: number, text: st
 
 export async function notifySupplyRequest(supply: {
   item: string
-  quantity: string
-  job_name: string
+  quantity: number
+  unit?: string
+  job_name: string | null
   requested_by: string
   home_depot_url: string
+  urgency?: number | null
 }) {
   if (!MGMT_CHAT) return
-  const text = `🛒 <b>New Supply Request</b>
+  const qtyDisplay = supply.unit ? `${supply.quantity} ${supply.unit}` : String(supply.quantity)
+  const urgencyLabel = supply.urgency ? `urgency ${supply.urgency}` : 'normal priority'
+  const text = `📦 <b>New Supply Request</b>
 
 From: <b>${supply.requested_by}</b>
-Item: <b>${supply.quantity}x ${supply.item}</b>${supply.job_name ? `\nJob: ${supply.job_name}` : ''}
+Item: <b>${supply.item}</b> · ${qtyDisplay}
+Job: ${supply.job_name || 'no job specified'}
+Priority: ${urgencyLabel}
 
 🔗 <a href="${supply.home_depot_url}">Search Home Depot →</a>
 <a href="${process.env.NEXT_PUBLIC_APP_URL}/supplies">View All Requests →</a>`

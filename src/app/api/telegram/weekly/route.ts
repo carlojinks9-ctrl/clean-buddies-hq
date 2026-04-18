@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+  const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID || '-5218394283'
   if (!mgmtChat) {
     return NextResponse.json({ error: 'TELEGRAM_MANAGEMENT_CHAT_ID not set' }, { status: 500 })
   }

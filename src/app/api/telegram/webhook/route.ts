@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase'
-import { sendFlaggedMessage, replyToMessage, notifySupplyRequest } from '@/lib/telegram'
+import { sendFlaggedMessage, replyToMessage, notifySupplyRequest, MGMT_CHAT_ID, CREW_CHAT_ID } from '@/lib/telegram'
 
 // ── Flag keyword categories ──────────────────────────────────────────────────
 
@@ -45,13 +45,77 @@ function checkMessage(text: string): { category: string; severity: 'high' | 'med
   return null
 }
 
-// /supply [item] [qty] [job name]  OR  /supply [item]
-function parseSupplyCommand(text: string): { item: string; quantity: string; jobName: string } | null {
-  const match = text.match(/^\/supply\s+(.+?)\s+(\d+)\s+(.+)$/i)
-  if (match) return { item: match[1].trim(), quantity: match[2], jobName: match[3].trim() }
-  const simple = text.match(/^\/supply\s+(.+)$/i)
-  if (simple) return { item: simple[1].trim(), quantity: '1', jobName: '' }
-  return null
+// Unit words recognised after a quantity number
+const UNIT_WORDS = new Set([
+  'bottle', 'bottles', 'roll', 'rolls', 'box', 'boxes', 'case', 'cases',
+  'pack', 'packs', 'can', 'cans', 'bag', 'bags', 'gallon', 'gallons',
+  'each', 'pair', 'pairs', 'set', 'sets', 'tube', 'tubes', 'sheet', 'sheets',
+  'bucket', 'buckets', 'jug', 'jugs', 'spray', 'sprays', 'pad', 'pads',
+])
+
+interface ParsedSupply {
+  item: string
+  quantity: number
+  unit: string
+  jobName: string
+  urgency: number | null
+}
+
+/**
+ * Flexible /supply parser.
+ * Examples that must work:
+ *   /supply pink stuff 1 bottle
+ *   /supply ram board 5 rolls
+ *   /supply glass cleaner 2 bottles lanai building 5 3
+ *   /supply trash bags 1 box model home 2
+ */
+function parseSupplyCommand(text: string): ParsedSupply | null {
+  const body = text.replace(/^\/supply\s*/i, '').trim()
+  if (!body) return null
+
+  const tokens = body.split(/\s+/)
+
+  // Pop urgency if last token is a single digit 1–3
+  let urgency: number | null = null
+  if (tokens.length > 1 && /^[1-3]$/.test(tokens[tokens.length - 1])) {
+    urgency = parseInt(tokens.pop()!, 10)
+  }
+
+  // Find quantity phrase: a number (optionally followed by a unit word)
+  let qtyIndex = -1
+  let qtyNum = 1
+  let qtyUnit = ''
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^\d+$/.test(tokens[i]) && i > 0) {
+      const nextWord = tokens[i + 1]?.toLowerCase() ?? ''
+      if (UNIT_WORDS.has(nextWord)) {
+        qtyIndex = i
+        qtyNum = parseInt(tokens[i], 10)
+        qtyUnit = tokens[i + 1]
+        break
+      } else {
+        // bare number with no unit — only treat as qty if there's an item before it
+        qtyIndex = i
+        qtyNum = parseInt(tokens[i], 10)
+        qtyUnit = ''
+        break
+      }
+    }
+  }
+
+  if (qtyIndex === -1) {
+    // No quantity found — whole thing is item name, quantity=1
+    return { item: tokens.join(' '), quantity: 1, unit: '', jobName: '', urgency }
+  }
+
+  const item = tokens.slice(0, qtyIndex).join(' ') || 'Unknown item'
+  const afterQty = qtyUnit
+    ? tokens.slice(qtyIndex + 2)
+    : tokens.slice(qtyIndex + 1)
+  const jobName = afterQty.join(' ')
+
+  return { item, quantity: qtyNum, unit: qtyUnit, jobName, urgency }
 }
 
 function homeDepotUrl(item: string) {
@@ -101,7 +165,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  const crewChatId = process.env.TELEGRAM_CREW_CHAT_ID
+  const crewChatId = CREW_CHAT_ID   // uses env var with hardcoded fallback
 
   // ── Log group chat IDs to activity_feed AND app_settings so we can discover them ──────────
   if (chatType === 'group' || chatType === 'supergroup') {
@@ -144,37 +208,46 @@ export async function POST(request: NextRequest) {
     if (!parsed) {
       await replyToMessage(chatId, messageId,
         `❌ Usage: <code>/supply [item] [quantity] [job name]</code>\n` +
-        `Example: <code>/supply Windex 4 Lanai Living</code>`
+        `Example: <code>/supply pink stuff 1 bottle lanai building 5</code>`
       )
       return NextResponse.json({ ok: true })
     }
 
     const hdUrl = homeDepotUrl(parsed.item)
+    const priorityMap: Record<number, 'low' | 'medium' | 'high'> = { 1: 'low', 2: 'medium', 3: 'high' }
+    const priority = parsed.urgency ? (priorityMap[parsed.urgency] ?? 'medium') : 'medium'
 
     const { error: supplyErr } = await db.from('supply_requests').insert({
       item_name: parsed.item,
-      quantity: parseInt(parsed.quantity),
+      quantity: parsed.quantity,
+      unit: parsed.unit || null,
       job_name: parsed.jobName || null,
       requested_by: senderName,
-      priority: 'medium',
+      priority,
       status: 'pending',
       home_depot_url: hdUrl,
       telegram_message_id: String(messageId),
     })
     if (supplyErr) console.error('[Telegram] supply_requests insert error:', supplyErr)
-    else console.log(`[Telegram] Supply request saved: ${parsed.quantity}x ${parsed.item}`)
+    else console.log(`[Telegram] Supply request saved: ${parsed.quantity} ${parsed.unit} ${parsed.item}`)
 
+    const qtyDisplay = parsed.unit ? `${parsed.quantity} ${parsed.unit}` : String(parsed.quantity)
+    const urgencyDisplay = parsed.urgency ? String(parsed.urgency) : 'normal'
+
+    // Reply in crew chat (or wherever command was sent)
     await replyToMessage(chatId, messageId,
-      `✅ <b>Added:</b> ${parsed.quantity}x ${parsed.item}${parsed.jobName ? ` for ${parsed.jobName}` : ''}\n` +
-      `Management has been notified.`
+      `✅ Supply request logged: <b>${parsed.item}</b> · ${qtyDisplay} · ${parsed.jobName || 'no job specified'} · urgency ${urgencyDisplay}`
     )
 
+    // Notify management chat
     await notifySupplyRequest({
       item: parsed.item,
       quantity: parsed.quantity,
-      job_name: parsed.jobName,
+      unit: parsed.unit,
+      job_name: parsed.jobName || null,
       requested_by: senderName,
       home_depot_url: hdUrl,
+      urgency: parsed.urgency,
     })
 
     return NextResponse.json({ ok: true })

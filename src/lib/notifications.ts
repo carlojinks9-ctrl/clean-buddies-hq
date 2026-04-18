@@ -150,7 +150,7 @@ export async function dispatch(input: NotificationInput): Promise<void> {
   // 3. Route by priority
   if (priority === 'urgent') {
     // → Telegram management chat + DMs
-    const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+    const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID || '-5218394283'
     if (mgmtChat) await sendTelegramMessage(mgmtChat, telegramText)
 
     // → DMs to specific people
@@ -169,7 +169,7 @@ export async function dispatch(input: NotificationInput): Promise<void> {
 
   if (priority === 'high') {
     // → Telegram management chat
-    const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+    const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID || '-5218394283'
     if (mgmtChat) await sendTelegramMessage(mgmtChat, telegramText)
 
     // → Web push

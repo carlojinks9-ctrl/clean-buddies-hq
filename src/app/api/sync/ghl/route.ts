@@ -185,7 +185,7 @@ async function runSync() {
           // Telegram notification for high urgency
           if (urgency === 'high') {
             const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
-            const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+            const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID || '-5218394283'
             if (mgmtChat && process.env.TELEGRAM_BOT_TOKEN) {
               await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
                 method: 'POST',

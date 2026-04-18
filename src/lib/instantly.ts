@@ -1,10 +1,11 @@
 /**
  * Instantly.ai API client
  * Uses INSTANTLY_API_KEY env var
- * v1 API: https://api.instantly.ai/api/v1
+ * v2 API: https://api.instantly.ai/api/v2
+ * Auth: Bearer token via Authorization header (key may be base64-encoded — used as-is)
  */
 
-const INSTANTLY_BASE = 'https://api.instantly.ai/api/v1'
+const INSTANTLY_BASE = 'https://api.instantly.ai/api/v2'
 
 function getApiKey(): string {
   const key = process.env.INSTANTLY_API_KEY
@@ -13,20 +14,22 @@ function getApiKey(): string {
 }
 
 async function instantlyFetch<T = unknown>(path: string, options?: RequestInit): Promise<T> {
-  const sep = path.includes('?') ? '&' : '?'
-  const url = `${INSTANTLY_BASE}${path}${sep}api_key=${getApiKey()}`
+  const url = `${INSTANTLY_BASE}${path}`
+  console.log('[instantly] fetch:', options?.method ?? 'GET', url)
   const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${getApiKey()}`,
       ...(options?.headers ?? {}),
     },
   })
+  const body = await res.text().catch(() => '')
+  console.log('[instantly] response:', res.status, res.statusText, body.slice(0, 500))
   if (!res.ok) {
-    const body = await res.text().catch(() => '')
     throw new Error(`Instantly API ${res.status} ${res.statusText}: ${body}`)
   }
-  return res.json() as Promise<T>
+  return JSON.parse(body) as T
 }
 
 // ── Instantly API Types ────────────────────────────────────────────────────
@@ -69,12 +72,15 @@ export interface InstantlyLead {
  * List campaigns.
  */
 export async function getCampaigns(): Promise<InstantlyCampaign[]> {
-  const res = await instantlyFetch<InstantlyCampaign[]>('/campaign/list')
-  return Array.isArray(res) ? res : []
+  // v2: GET /campaigns
+  const res = await instantlyFetch<{ items?: InstantlyCampaign[] } | InstantlyCampaign[]>('/campaigns?limit=20')
+  if (Array.isArray(res)) return res
+  return (res as { items?: InstantlyCampaign[] }).items ?? []
 }
 
 /**
  * Get email replies received (inbound replies from prospects).
+ * v2 API: GET /emails with filter for replies
  */
 export async function getReceivedEmails(params: {
   campaignId?: string
@@ -83,13 +89,19 @@ export async function getReceivedEmails(params: {
 } = {}): Promise<InstantlyEmail[]> {
   const qs = new URLSearchParams({
     limit: String(params.limit ?? 20),
-    skip: String(params.skip ?? 0),
-    reply_to_type: 'received',
+    // v2 uses "starting_after" for cursor pagination, "skip" is not valid
+    // For simplicity, we fetch the first page each time (dedup by instantly_id in DB)
   })
   if (params.campaignId) qs.set('campaign_id', params.campaignId)
 
-  const res = await instantlyFetch<InstantlyEmail[]>(`/emails/list?${qs}`)
-  return Array.isArray(res) ? res : []
+  // v2 endpoint: /emails — returns unified inbox emails
+  // Replies from prospects are type "received" in v1, filter varies in v2
+  const res = await instantlyFetch<{ items?: InstantlyEmail[]; data?: InstantlyEmail[] } | InstantlyEmail[]>(
+    `/emails?${qs}`
+  )
+  if (Array.isArray(res)) return res
+  const payload = res as { items?: InstantlyEmail[]; data?: InstantlyEmail[] }
+  return payload.items ?? payload.data ?? []
 }
 
 /**

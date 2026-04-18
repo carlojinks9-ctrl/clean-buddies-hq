@@ -314,7 +314,7 @@ async function sendEnhancedDigest(data: {
   quo_flagged_24h: Array<{ name: string; reason: string | null }>
   low_margin_jobs: Array<{ title: string; margin_pct: number }>
 }) {
-  const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+  const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID || '-5218394283'
   if (!mgmtChat || !process.env.TELEGRAM_BOT_TOKEN) return
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''

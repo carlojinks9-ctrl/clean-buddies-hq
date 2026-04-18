@@ -80,23 +80,28 @@ export async function getFormSubmissions(params: {
   startAt?: string    // ISO date string
   endAt?: string
   limit?: number
-  skip?: number
+  page?: number       // 1-indexed page (GHL does NOT accept "skip")
   formId?: string
 } = {}): Promise<{ submissions: GHLFormSubmission[]; total: number }> {
   const locationId = getLocationId()
   const qs = new URLSearchParams()
   qs.set('locationId', locationId)
   qs.set('limit', String(params.limit ?? 50))
-  qs.set('skip', String(params.skip ?? 0))
+  // GHL v2 uses "page" (1-indexed) — "skip" causes a 422
+  if (params.page && params.page > 1) qs.set('page', String(params.page))
   if (params.startAt) qs.set('startAt', params.startAt)
   if (params.endAt) qs.set('endAt', params.endAt)
   if (params.formId) qs.set('formId', params.formId)
+
+  console.log('[ghl] getFormSubmissions request params:', qs.toString())
 
   const res = await ghlFetch<{
     submissions: GHLFormSubmission[]
     total: number
     count: number
   }>(`/forms/submissions?${qs}`)
+
+  console.log('[ghl] getFormSubmissions response: total=%d, count=%d', res.total, res.count)
 
   return {
     submissions: res.submissions || [],

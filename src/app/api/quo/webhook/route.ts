@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase'
 import { normalizePhone, QUO_MISSED_STATUSES } from '@/lib/quo'
 import { analyzeAndFlag } from '@/lib/ai-flag'
+import { MGMT_CHAT_ID } from '@/lib/telegram'
 import crypto from 'node:crypto'
 
 // Always return 200 so Quo doesn't retry on application errors
@@ -207,7 +208,7 @@ export async function POST(request: NextRequest) {
         }, { onConflict: 'source,source_id', ignoreDuplicates: false })
 
         // Telegram alert for all missed calls
-        const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+        const mgmtChat = MGMT_CHAT_ID
         if (mgmtChat && process.env.TELEGRAM_BOT_TOKEN) {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
           const vmNote = voicemailUrl ? '\nVoicemail: left ✓' : ''
@@ -230,14 +231,19 @@ export async function POST(request: NextRequest) {
 
   // ── call.recording.completed ────────────────────────────────────────────
   // Recording arrives as a separate event; update the call record with the URL
+  // data.object.callId = the parent call ID; data.object.id = the recording ID
   if (eventType === 'call.recording.completed') {
     try {
-      const quoId = String(obj.id || '')
+      const quoId = String(obj.callId || obj.id || '')
       const media = obj.media as Array<{ url?: string; type?: string; duration?: number }> | null
-      const recordingUrl = media?.find(m => m.type?.startsWith('audio'))?.url ?? null
+      const recordingUrl = media?.find(m => m.type?.startsWith('audio'))?.url
+        ?? (typeof obj.recordingUrl === 'string' ? obj.recordingUrl : null)
 
       if (quoId && recordingUrl) {
         await db.from('quo_calls').update({ recording_url: recordingUrl }).eq('quo_id', quoId)
+        console.log('[quo/webhook] recording URL saved for call:', quoId)
+      } else {
+        console.warn('[quo/webhook] call.recording.completed — no callId or recordingUrl found in obj:', JSON.stringify(obj).slice(0, 300))
       }
     } catch (err) {
       console.error('[quo/webhook] call.recording.completed error:', err)
@@ -278,7 +284,7 @@ export async function POST(request: NextRequest) {
             .maybeSingle()
 
           const displayName = call?.contact_name ?? call?.from_number ?? 'Unknown'
-          const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+          const mgmtChat = MGMT_CHAT_ID
           if (mgmtChat && process.env.TELEGRAM_BOT_TOKEN) {
             const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
             await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
@@ -400,7 +406,7 @@ export async function POST(request: NextRequest) {
         }, { onConflict: 'source,source_id', ignoreDuplicates: false })
 
         // Telegram alert
-        const mgmtChat = process.env.TELEGRAM_MANAGEMENT_CHAT_ID
+        const mgmtChat = MGMT_CHAT_ID
         if (mgmtChat && process.env.TELEGRAM_BOT_TOKEN) {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
           const preview = body ? body.slice(0, 100) : '(no body)'
