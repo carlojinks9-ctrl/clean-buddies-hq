@@ -9,17 +9,41 @@ import { Button } from '@/components/ui/Button'
 import { Skeleton } from '@/components/ui/Skeleton'
 import {
   Users, Building2, Plus, ArrowRight, Phone, Mail,
-  TrendingUp, UserPlus, Send, CheckCircle, XCircle
+  TrendingUp, UserPlus, Send, CheckCircle, XCircle,
+  AlertTriangle, Clock, Globe, Zap, MessageSquare,
 } from 'lucide-react'
-import { format } from 'date-fns'
+import { format, isPast, parseISO } from 'date-fns'
 import type { Client, Lead } from '@/types'
+import { clsx } from 'clsx'
 
 const statusBadge: Record<string, { variant: any; label: string; icon: any }> = {
-  new:       { variant: 'blue',   label: 'New',       icon: UserPlus },
-  contacted: { variant: 'amber',  label: 'Contacted', icon: Phone },
-  bid_sent:  { variant: 'purple', label: 'Bid Sent',  icon: Send },
-  won:       { variant: 'green',  label: 'Won',       icon: CheckCircle },
-  lost:      { variant: 'gray',   label: 'Lost',      icon: XCircle },
+  new:              { variant: 'blue',   label: 'New',           icon: UserPlus },
+  contacted:        { variant: 'amber',  label: 'Contacted',     icon: Phone },
+  bid_sent:         { variant: 'purple', label: 'Bid Sent',      icon: Send },
+  won:              { variant: 'green',  label: 'Won',           icon: CheckCircle },
+  lost:             { variant: 'gray',   label: 'Lost',          icon: XCircle },
+  qualified:        { variant: 'blue',   label: 'Qualified',     icon: UserPlus },
+  estimate_needed:  { variant: 'amber',  label: 'Est. Needed',   icon: Send },
+  estimate_sent:    { variant: 'purple', label: 'Est. Sent',     icon: Send },
+  follow_up:        { variant: 'amber',  label: 'Follow Up',     icon: Clock },
+  nurture:          { variant: 'gray',   label: 'Nurture',       icon: Phone },
+}
+
+const SOURCE_ICON: Record<string, { label: string; color: string }> = {
+  website:   { label: 'Web',       color: 'text-accent-blue' },
+  ghl:       { label: 'GHL',       color: 'text-accent-blue' },
+  quo:       { label: 'Quo',       color: 'text-accent-amber' },
+  instantly: { label: 'Instantly', color: 'text-brand-green' },
+  gmail:     { label: 'Gmail',     color: 'text-accent-red' },
+  jobber:    { label: 'Jobber',    color: 'text-text-tertiary' },
+  referral:  { label: 'Referral',  color: 'text-accent-blue' },
+  manual:    { label: 'Manual',    color: 'text-text-tertiary' },
+}
+
+const URGENCY_COLOR: Record<string, string> = {
+  high:   'text-accent-red',
+  medium: 'text-accent-amber',
+  low:    'text-text-tertiary',
 }
 
 type Tab = 'clients' | 'leads'
@@ -292,40 +316,66 @@ export default function ClientsPage() {
                       ))
                     ) : statusLeads.length === 0 ? (
                       <div className="kanban-card text-[11px] text-text-tertiary text-center py-3">Empty</div>
-                    ) : statusLeads.map(lead => (
-                      <div key={lead.id} className="kanban-card">
-                        <p className="text-sm font-medium text-text-primary">{lead.name}</p>
-                        {lead.company && <p className="text-[11px] text-text-tertiary mt-0.5">{lead.company}</p>}
-                        {lead.service_type && <p className="text-[11px] text-text-tertiary">{lead.service_type}</p>}
-                        {lead.estimated_value_cents && (
-                          <p className="text-xs font-mono text-brand-green mt-1.5">
-                            ${(lead.estimated_value_cents / 100).toLocaleString()}
-                          </p>
-                        )}
-                        <p className="text-[10px] text-text-tertiary mt-1.5">
-                          {format(new Date(lead.created_at), 'MMM d')}
-                        </p>
-                        {status !== 'won' && status !== 'lost' && (
-                          <div className="flex gap-1 mt-2">
-                            <button
-                              onClick={() => {
-                                const next = { new: 'contacted', contacted: 'bid_sent', bid_sent: 'won' }[status]
-                                if (next) updateLeadStatus(lead.id, next)
-                              }}
-                              className="text-[10px] text-brand-green hover:text-white bg-brand-green/10 hover:bg-brand-green/30 px-2 py-0.5 rounded transition-colors min-h-[32px] flex items-center"
-                            >
-                              → {statusBadge[{ new: 'contacted', contacted: 'bid_sent', bid_sent: 'won' }[status] || 'won']?.label}
-                            </button>
-                            <button
-                              onClick={() => updateLeadStatus(lead.id, 'lost')}
-                              className="text-[10px] text-text-tertiary hover:text-accent-red px-1 py-0.5 rounded transition-colors min-h-[32px] flex items-center"
-                            >
-                              ✕
-                            </button>
+                    ) : statusLeads.map(lead => {
+                      const src = SOURCE_ICON[(lead as any).source] || SOURCE_ICON.manual
+                      const urgency = (lead as any).urgency as string | undefined
+                      const nextAction = (lead as any).next_action as string | undefined
+                      const nextDue = (lead as any).next_action_due as string | undefined
+                      const owner = (lead as any).owner as string | undefined
+                      const isOverdue = nextDue ? isPast(parseISO(nextDue)) : false
+                      return (
+                        <div key={lead.id} className={clsx('kanban-card', isOverdue && 'border-accent-red/40')}>
+                          <div className="flex items-start justify-between gap-1">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {urgency === 'high' && <span className="w-1.5 h-1.5 rounded-full bg-accent-red flex-shrink-0 mt-1" />}
+                              {urgency === 'medium' && <span className="w-1.5 h-1.5 rounded-full bg-accent-amber flex-shrink-0 mt-1" />}
+                              <p className="text-sm font-medium text-text-primary truncate">{lead.name}</p>
+                            </div>
+                            <span className={clsx('text-[10px] font-mono flex-shrink-0', src.color)}>{src.label}</span>
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          {lead.company && <p className="text-[11px] text-text-tertiary mt-0.5 truncate">{lead.company}</p>}
+                          {lead.service_type && <p className="text-[11px] text-text-tertiary truncate">{lead.service_type}</p>}
+                          {lead.estimated_value_cents ? (
+                            <p className="text-xs font-mono text-brand-green mt-1.5">
+                              ${(lead.estimated_value_cents / 100).toLocaleString()}
+                            </p>
+                          ) : null}
+                          {nextAction && (
+                            <div className={clsx('flex items-start gap-1 mt-1.5', isOverdue ? 'text-accent-red' : 'text-text-tertiary')}>
+                              <Clock className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                              <p className="text-[10px] leading-tight line-clamp-2">{nextAction}</p>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between mt-1.5">
+                            <p className="text-[10px] text-text-tertiary">
+                              {format(new Date(lead.created_at), 'MMM d')}
+                            </p>
+                            {owner && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.05] text-text-secondary capitalize">{owner}</span>
+                            )}
+                          </div>
+                          {status !== 'won' && status !== 'lost' && (
+                            <div className="flex gap-1 mt-2">
+                              <button
+                                onClick={() => {
+                                  const next = { new: 'contacted', contacted: 'bid_sent', bid_sent: 'won' }[status]
+                                  if (next) updateLeadStatus(lead.id, next)
+                                }}
+                                className="text-[10px] text-brand-green hover:text-white bg-brand-green/10 hover:bg-brand-green/30 px-2 py-0.5 rounded transition-colors min-h-[32px] flex items-center"
+                              >
+                                → {statusBadge[{ new: 'contacted', contacted: 'bid_sent', bid_sent: 'won' }[status] || 'won']?.label}
+                              </button>
+                              <button
+                                onClick={() => updateLeadStatus(lead.id, 'lost')}
+                                className="text-[10px] text-text-tertiary hover:text-accent-red px-1 py-0.5 rounded transition-colors min-h-[32px] flex items-center"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )

@@ -9,8 +9,9 @@ import {
   Phone, MessageSquare, Mail, Globe, Zap, AlertTriangle,
   Clock, CheckCircle2, ChevronRight, RefreshCw, Filter,
   ArrowUpRight, UserPlus, XCircle, Bell, BellOff,
+  Flame, ListChecks, BarChart2,
 } from 'lucide-react'
-import { formatDistanceToNow, format, isPast, parseISO } from 'date-fns'
+import { formatDistanceToNow, format, isPast, parseISO, isToday, isTomorrow } from 'date-fns'
 import { clsx } from 'clsx'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -101,6 +102,23 @@ const URGENCY_META = {
 }
 
 type FilterSource = 'all' | InboundSource | 'breached' | 'actioned'
+type InboxMode = 'inbox' | 'hot_leads' | 'followup'
+
+interface HotLead {
+  id: string
+  name: string
+  company: string | null
+  source: string
+  urgency: 'high' | 'medium' | 'low'
+  status: string
+  estimated_value_cents: number | null
+  next_action: string | null
+  next_action_due: string | null
+  owner: string | null
+  tags: string[]
+  last_activity_at: string | null
+  created_at: string
+}
 
 // ── SLA Timer ─────────────────────────────────────────────────────────────
 
@@ -123,7 +141,11 @@ function SlaTimer({ deadline, breached }: { deadline: string | null; breached: b
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function InboxPage() {
+  const [mode, setMode] = useState<InboxMode>('inbox')
   const [items, setItems] = useState<DisplayItem[]>([])
+  const [hotLeads, setHotLeads] = useState<HotLead[]>([])
+  const [followUpLeads, setFollowUpLeads] = useState<HotLead[]>([])
+  const [leadsLoading, setLeadsLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<FilterSource>('all')
   const [syncing, setSyncing] = useState(false)
@@ -272,12 +294,52 @@ export default function InboxPage() {
     setLoading(false)
   }, [])
 
+  const loadLeads = useCallback(async () => {
+    setLeadsLoading(true)
+    try {
+      const { data } = await supabase
+        .from('leads')
+        .select('id, name, company, source, urgency, status, estimated_value_cents, next_action, next_action_due, owner, tags, last_activity_at, created_at')
+        .not('status', 'in', '("won","lost")')
+        .order('created_at', { ascending: false })
+        .limit(200)
+
+      const leads = (data || []) as HotLead[]
+      const urgencyRank = { high: 0, medium: 1, low: 2 }
+
+      // Hot leads: all active, sorted by urgency then estimated value
+      const sorted = [...leads].sort((a, b) => {
+        const ua = urgencyRank[a.urgency] ?? 2
+        const ub = urgencyRank[b.urgency] ?? 2
+        if (ua !== ub) return ua - ub
+        return (b.estimated_value_cents || 0) - (a.estimated_value_cents || 0)
+      })
+      setHotLeads(sorted)
+
+      // Follow-up queue: next_action_due in past or today, not won/lost
+      const followUp = leads.filter(l => {
+        if (!l.next_action_due) return false
+        const due = parseISO(l.next_action_due)
+        return isPast(due) || isToday(due) || isTomorrow(due)
+      }).sort((a, b) => {
+        const da = a.next_action_due ? parseISO(a.next_action_due).getTime() : Infinity
+        const db = b.next_action_due ? parseISO(b.next_action_due).getTime() : Infinity
+        return da - db
+      })
+      setFollowUpLeads(followUp)
+    } catch (err) {
+      console.error('[inbox] leads load error:', err)
+    }
+    setLeadsLoading(false)
+  }, [])
+
   useEffect(() => {
     load()
+    loadLeads()
     // Load last SLA check time
     supabase.from('app_settings').select('value').eq('key', 'last_sla_check').maybeSingle()
       .then(({ data }) => { if (data) setLastCheck(data.value) })
-  }, [load])
+  }, [load, loadLeads])
 
   async function runSlaCheck() {
     setSyncing(true)
@@ -576,8 +638,38 @@ export default function InboxPage() {
         </div>
       </div>
 
+      {/* Mode Tabs */}
+      <div className="flex items-center gap-1 p-1 bg-bg-surface rounded-xl border border-white/[0.06] w-fit">
+        {([
+          { key: 'inbox',     label: 'Inbox',         icon: Bell,       badge: activeItems.length },
+          { key: 'hot_leads', label: 'Hot Leads',     icon: Flame,      badge: hotLeads.filter(l => l.urgency === 'high').length },
+          { key: 'followup',  label: 'Follow-Up Queue', icon: ListChecks, badge: followUpLeads.filter(l => l.next_action_due && isPast(parseISO(l.next_action_due))).length },
+        ] as Array<{ key: InboxMode; label: string; icon: typeof Bell; badge: number }>).map(tab => {
+          const Icon = tab.icon
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setMode(tab.key)}
+              className={clsx(
+                'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+                mode === tab.key ? 'bg-white/10 text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-white/[0.04]'
+              )}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {tab.label}
+              {tab.badge > 0 && (
+                <span className={clsx(
+                  'text-[10px] font-mono px-1.5 py-0.5 rounded-md',
+                  tab.key === 'inbox' && tab.badge > 0 ? 'bg-accent-red/15 text-accent-red' : 'bg-white/[0.08] text-text-tertiary'
+                )}>{tab.badge}</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
       {/* SLA Breach Alert */}
-      {breachCount > 0 && !showActioned && (
+      {mode === 'inbox' && breachCount > 0 && !showActioned && (
         <div className="rounded-xl border border-accent-red/30 bg-accent-red/5 px-4 py-3 flex items-center gap-3">
           <AlertTriangle className="w-4 h-4 text-accent-red flex-shrink-0" />
           <div className="flex-1">
@@ -597,136 +689,327 @@ export default function InboxPage() {
         </div>
       )}
 
-      {/* Filter tabs */}
-      <div className="flex items-center gap-1 flex-wrap">
-        {FILTER_TABS.map(tab => (
+      {/* ── Inbox Mode ──────────────────────────────────────────────────── */}
+      {mode === 'inbox' && (<>
+        {/* Filter tabs */}
+        <div className="flex items-center gap-1 flex-wrap">
+          {FILTER_TABS.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => { setFilter(tab.key); setShowActioned(false) }}
+              className={clsx(
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5',
+                filter === tab.key && !showActioned
+                  ? tab.key === 'breached'
+                    ? 'bg-accent-red/15 text-accent-red border border-accent-red/25'
+                    : 'bg-white/10 text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-white/[0.04]'
+              )}
+            >
+              {tab.label}
+              {tab.count != null && tab.count > 0 && (
+                <span className={clsx(
+                  'text-[10px] font-mono px-1.5 py-0.5 rounded-md',
+                  tab.key === 'breached' && tab.count > 0 ? 'bg-accent-red/15 text-accent-red' : 'bg-white/[0.08] text-text-tertiary'
+                )}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
+          <div className="w-px h-4 bg-white/10 mx-1" />
           <button
-            key={tab.key}
-            onClick={() => { setFilter(tab.key); setShowActioned(false) }}
+            onClick={() => { setShowActioned(p => !p); setFilter('all') }}
             className={clsx(
               'px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5',
-              filter === tab.key && !showActioned
-                ? tab.key === 'breached'
-                  ? 'bg-accent-red/15 text-accent-red border border-accent-red/25'
-                  : 'bg-white/10 text-text-primary'
-                : 'text-text-secondary hover:text-text-primary hover:bg-white/[0.04]'
+              showActioned ? 'bg-white/10 text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-white/[0.04]'
             )}
           >
-            {tab.label}
-            {tab.count != null && tab.count > 0 && (
-              <span className={clsx(
-                'text-[10px] font-mono px-1.5 py-0.5 rounded-md',
-                tab.key === 'breached' && tab.count > 0 ? 'bg-accent-red/15 text-accent-red' : 'bg-white/[0.08] text-text-tertiary'
-              )}>
-                {tab.count}
-              </span>
-            )}
+            <CheckCircle2 className="w-3 h-3" />
+            Actioned ({actionedItems.length})
           </button>
-        ))}
-        <div className="w-px h-4 bg-white/10 mx-1" />
-        <button
-          onClick={() => { setShowActioned(p => !p); setFilter('all') }}
-          className={clsx(
-            'px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5',
-            showActioned ? 'bg-white/10 text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-white/[0.04]'
-          )}
-        >
-          <CheckCircle2 className="w-3 h-3" />
-          Actioned ({actionedItems.length})
-        </button>
-      </div>
+        </div>
 
-      {/* Main list */}
-      <div className="rounded-2xl border border-white/[0.06] bg-bg-surface overflow-hidden">
-        {loading ? (
-          <div className="divide-y divide-white/[0.04]">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="px-4 py-4 flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex-shrink-0" />
-                <div className="flex-1 space-y-2">
-                  <Skeleton className="h-3.5 w-2/5" />
-                  <Skeleton className="h-3 w-3/5" />
-                  <Skeleton className="h-2.5 w-1/3" />
+        {/* Main list */}
+        <div className="rounded-2xl border border-white/[0.06] bg-bg-surface overflow-hidden">
+          {loading ? (
+            <div className="divide-y divide-white/[0.04]">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="px-4 py-4 flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex-shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-3.5 w-2/5" />
+                    <Skeleton className="h-3 w-3/5" />
+                    <Skeleton className="h-2.5 w-1/3" />
+                  </div>
                 </div>
+              ))}
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div className="py-16 text-center">
+              {showActioned ? (
+                <>
+                  <CheckCircle2 className="w-8 h-8 text-brand-green mx-auto mb-3 opacity-50" />
+                  <p className="text-sm text-text-secondary font-medium">No actioned items</p>
+                  <p className="text-[12px] text-text-tertiary mt-1">Items you action will appear here</p>
+                </>
+              ) : filter === 'breached' ? (
+                <>
+                  <CheckCircle2 className="w-8 h-8 text-brand-green mx-auto mb-3 opacity-50" />
+                  <p className="text-sm text-text-secondary font-medium">No SLA breaches</p>
+                  <p className="text-[12px] text-text-tertiary mt-1">All items are within response window</p>
+                </>
+              ) : (
+                <>
+                  <BellOff className="w-8 h-8 text-text-tertiary mx-auto mb-3 opacity-50" />
+                  <p className="text-sm text-text-secondary font-medium">Inbox clear</p>
+                  <p className="text-[12px] text-text-tertiary mt-1 mb-4">
+                    {filter === 'all' ? 'No new inbound items from any source' : `No items from ${SOURCE_META[filter as InboundSource]?.label ?? filter}`}
+                  </p>
+                  <Button size="sm" variant="secondary" onClick={syncSources} loading={syncing}>
+                    Sync Sources
+                  </Button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-white/[0.04]">
+              {filteredItems.map(item => <ItemRow key={item._key} item={item} />)}
+            </div>
+          )}
+        </div>
+
+        {/* Source status summary */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {(Object.entries(SOURCE_META) as Array<[InboundSource, typeof SOURCE_META[InboundSource]]>)
+            .filter(([key]) => key !== 'manual')
+            .map(([source, meta]) => {
+            const Icon = meta.icon
+            const count = sourceCounts[source] || 0
+            return (
+              <div
+                key={source}
+                className={clsx(
+                  'p-3 rounded-xl border cursor-pointer transition-colors',
+                  filter === source && !showActioned
+                    ? 'border-brand-green/30 bg-brand-green/5'
+                    : 'border-white/[0.06] bg-bg-elevated hover:border-white/[0.10]'
+                )}
+                onClick={() => { setFilter(source); setShowActioned(false) }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={clsx('w-6 h-6 rounded-md flex items-center justify-center', meta.bg)}>
+                    <Icon className={clsx('w-3.5 h-3.5', meta.color)} />
+                  </div>
+                  <span className="text-[11px] text-text-tertiary font-medium">{meta.label}</span>
+                </div>
+                <p className="text-xl font-mono font-bold text-text-primary">{count}</p>
+                <p className="text-[10px] text-text-tertiary mt-0.5">active</p>
               </div>
-            ))}
-          </div>
-        ) : filteredItems.length === 0 ? (
-          <div className="py-16 text-center">
-            {showActioned ? (
-              <>
-                <CheckCircle2 className="w-8 h-8 text-brand-green mx-auto mb-3 opacity-50" />
-                <p className="text-sm text-text-secondary font-medium">No actioned items</p>
-                <p className="text-[12px] text-text-tertiary mt-1">Items you action will appear here</p>
-              </>
-            ) : filter === 'breached' ? (
-              <>
-                <CheckCircle2 className="w-8 h-8 text-brand-green mx-auto mb-3 opacity-50" />
-                <p className="text-sm text-text-secondary font-medium">No SLA breaches</p>
-                <p className="text-[12px] text-text-tertiary mt-1">All items are within response window</p>
-              </>
-            ) : (
-              <>
-                <BellOff className="w-8 h-8 text-text-tertiary mx-auto mb-3 opacity-50" />
-                <p className="text-sm text-text-secondary font-medium">Inbox clear</p>
-                <p className="text-[12px] text-text-tertiary mt-1 mb-4">
-                  {filter === 'all' ? 'No new inbound items from any source' : `No items from ${SOURCE_META[filter as InboundSource]?.label ?? filter}`}
+            )
+          })}
+        </div>
+
+        {/* Setup hints for unconfigured sources */}
+        <SetupHints />
+      </>)}
+
+      {/* ── Hot Leads Mode ──────────────────────────────────────────────── */}
+      {mode === 'hot_leads' && (
+        <HotLeadsBoard leads={hotLeads} loading={leadsLoading} />
+      )}
+
+      {/* ── Follow-Up Queue Mode ─────────────────────────────────────────── */}
+      {mode === 'followup' && (
+        <FollowUpQueue leads={followUpLeads} loading={leadsLoading} />
+      )}
+    </div>
+  )
+}
+
+// ── Hot Leads Board ────────────────────────────────────────────────────────
+
+const SOURCE_COLOR: Record<string, string> = {
+  ghl: 'text-accent-blue', instantly: 'text-brand-green',
+  quo: 'text-accent-amber', gmail: 'text-accent-red',
+  jobber: 'text-text-tertiary', referral: 'text-accent-blue', manual: 'text-text-tertiary',
+}
+const SOURCE_LABEL: Record<string, string> = {
+  ghl: 'GHL', instantly: 'Instantly', quo: 'Quo',
+  gmail: 'Gmail', jobber: 'Jobber', referral: 'Ref', manual: 'Manual',
+}
+
+function HotLeadsBoard({ leads, loading }: { leads: HotLead[]; loading: boolean }) {
+  if (loading) return (
+    <div className="space-y-2">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="rounded-xl border border-white/[0.06] bg-bg-surface px-4 py-3">
+          <Skeleton className="h-3.5 w-1/3 mb-2" />
+          <Skeleton className="h-3 w-1/2" />
+        </div>
+      ))}
+    </div>
+  )
+  if (leads.length === 0) return (
+    <div className="py-16 text-center rounded-2xl border border-white/[0.06] bg-bg-surface">
+      <Flame className="w-8 h-8 text-text-tertiary mx-auto mb-3 opacity-50" />
+      <p className="text-sm text-text-secondary">No active leads</p>
+      <p className="text-[12px] text-text-tertiary mt-1">Leads from Inbox will appear here</p>
+    </div>
+  )
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-text-tertiary px-1">{leads.length} active leads — sorted by urgency + value</p>
+      {leads.map(lead => {
+        const urgencyDot = lead.urgency === 'high' ? 'bg-accent-red' : lead.urgency === 'medium' ? 'bg-accent-amber' : 'bg-text-tertiary'
+        const srcColor = SOURCE_COLOR[lead.source] || 'text-text-tertiary'
+        const srcLabel = SOURCE_LABEL[lead.source] || lead.source
+        const isOverdue = lead.next_action_due ? isPast(parseISO(lead.next_action_due)) : false
+        return (
+          <div key={lead.id} className={clsx(
+            'rounded-xl border bg-bg-surface px-4 py-3 flex items-start gap-3',
+            isOverdue ? 'border-accent-red/30' : 'border-white/[0.06]'
+          )}>
+            <span className={clsx('w-2 h-2 rounded-full flex-shrink-0 mt-1.5', urgencyDot)} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-text-primary">{lead.name}</span>
+                {lead.company && <span className="text-[11px] text-text-tertiary">— {lead.company}</span>}
+                <span className={clsx('text-[10px] font-mono', srcColor)}>{srcLabel}</span>
+                {lead.owner && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.05] text-text-secondary capitalize">{lead.owner}</span>
+                )}
+              </div>
+              {lead.next_action && (
+                <p className={clsx('text-[11px] mt-1', isOverdue ? 'text-accent-red' : 'text-text-tertiary')}>
+                  <Clock className="w-3 h-3 inline mr-1" />
+                  {lead.next_action}
+                  {lead.next_action_due && (
+                    <span className="ml-1 font-mono opacity-70">
+                      · {isOverdue ? 'overdue' : formatDistanceToNow(parseISO(lead.next_action_due), { addSuffix: true })}
+                    </span>
+                  )}
                 </p>
-                <Button size="sm" variant="secondary" onClick={syncSources} loading={syncing}>
-                  Sync Sources
-                </Button>
-              </>
+              )}
+              {lead.tags && lead.tags.length > 0 && (
+                <div className="flex gap-1 flex-wrap mt-1.5">
+                  {lead.tags.slice(0, 4).map(t => (
+                    <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.05] text-text-tertiary">{t}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+            {lead.estimated_value_cents ? (
+              <span className="text-sm font-mono font-bold text-brand-green flex-shrink-0">
+                ${(lead.estimated_value_cents / 100).toLocaleString()}
+              </span>
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Follow-Up Queue ────────────────────────────────────────────────────────
+
+function FollowUpQueue({ leads, loading }: { leads: HotLead[]; loading: boolean }) {
+  if (loading) return (
+    <div className="space-y-2">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="rounded-xl border border-white/[0.06] bg-bg-surface px-4 py-3">
+          <Skeleton className="h-3.5 w-1/3 mb-2" />
+          <Skeleton className="h-3 w-2/3" />
+        </div>
+      ))}
+    </div>
+  )
+  if (leads.length === 0) return (
+    <div className="py-16 text-center rounded-2xl border border-white/[0.06] bg-bg-surface">
+      <ListChecks className="w-8 h-8 text-brand-green mx-auto mb-3 opacity-50" />
+      <p className="text-sm text-text-secondary font-medium">Follow-up queue is clear</p>
+      <p className="text-[12px] text-text-tertiary mt-1">No leads due for follow-up today or tomorrow</p>
+    </div>
+  )
+
+  const overdue = leads.filter(l => l.next_action_due && isPast(parseISO(l.next_action_due)))
+  const today = leads.filter(l => l.next_action_due && !isPast(parseISO(l.next_action_due)) && isToday(parseISO(l.next_action_due)))
+  const tomorrow = leads.filter(l => l.next_action_due && isTomorrow(parseISO(l.next_action_due)))
+
+  function LeadRow({ lead, isOverdue }: { lead: HotLead; isOverdue: boolean }) {
+    const srcColor = SOURCE_COLOR[lead.source] || 'text-text-tertiary'
+    const srcLabel = SOURCE_LABEL[lead.source] || lead.source
+    return (
+      <div className={clsx(
+        'rounded-xl border bg-bg-surface px-4 py-3',
+        isOverdue ? 'border-accent-red/30 bg-accent-red/[0.02]' : 'border-white/[0.06]'
+      )}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-text-primary">{lead.name}</span>
+              {lead.company && <span className="text-[11px] text-text-tertiary">— {lead.company}</span>}
+              <span className={clsx('text-[10px] font-mono', srcColor)}>{srcLabel}</span>
+              {lead.owner && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.05] text-text-secondary capitalize">{lead.owner}</span>
+              )}
+            </div>
+            {lead.next_action && (
+              <p className={clsx('text-[12px] mt-1 font-medium', isOverdue ? 'text-accent-red' : 'text-text-secondary')}>
+                {lead.next_action}
+              </p>
+            )}
+            {lead.next_action_due && (
+              <p className={clsx('text-[11px] mt-0.5 font-mono', isOverdue ? 'text-accent-red/70' : 'text-text-tertiary')}>
+                {isOverdue
+                  ? `Overdue · was due ${formatDistanceToNow(parseISO(lead.next_action_due), { addSuffix: true })}`
+                  : `Due ${format(parseISO(lead.next_action_due), 'h:mm a')}`
+                }
+              </p>
             )}
           </div>
-        ) : (
-          <div className="divide-y divide-white/[0.04]">
-            {filteredItems.map(item => <ItemRow key={item._key} item={item} />)}
+          {lead.estimated_value_cents ? (
+            <span className="text-sm font-mono font-bold text-brand-green flex-shrink-0">
+              ${(lead.estimated_value_cents / 100).toLocaleString()}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {overdue.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold text-accent-red uppercase tracking-wider px-1 mb-2">
+            Overdue ({overdue.length})
+          </p>
+          <div className="space-y-2">
+            {overdue.map(l => <LeadRow key={l.id} lead={l} isOverdue />)}
           </div>
-        )}
-      </div>
-
-      {/* Source status summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        {(Object.entries(SOURCE_META) as Array<[InboundSource, typeof SOURCE_META[InboundSource]]>)
-          .filter(([key]) => key !== 'manual')
-          .map(([source, meta]) => {
-          const Icon = meta.icon
-          const count = sourceCounts[source] || 0
-          const isConfigured = source === 'quo_call' || source === 'quo_message'
-            ? !!process.env.NEXT_PUBLIC_SUPABASE_URL  // quo is always "on" if app is running
-            : source === 'ghl'
-            ? true  // show regardless
-            : source === 'instantly'
-            ? true
-            : source === 'gmail'
-            ? true
-            : false
-          return (
-            <div
-              key={source}
-              className={clsx(
-                'p-3 rounded-xl border cursor-pointer transition-colors',
-                filter === source && !showActioned
-                  ? 'border-brand-green/30 bg-brand-green/5'
-                  : 'border-white/[0.06] bg-bg-elevated hover:border-white/[0.10]'
-              )}
-              onClick={() => { setFilter(source); setShowActioned(false) }}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <div className={clsx('w-6 h-6 rounded-md flex items-center justify-center', meta.bg)}>
-                  <Icon className={clsx('w-3.5 h-3.5', meta.color)} />
-                </div>
-                <span className="text-[11px] text-text-tertiary font-medium">{meta.label}</span>
-              </div>
-              <p className="text-xl font-mono font-bold text-text-primary">{count}</p>
-              <p className="text-[10px] text-text-tertiary mt-0.5">active</p>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Setup hints for unconfigured sources */}
-      <SetupHints />
+        </div>
+      )}
+      {today.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold text-accent-amber uppercase tracking-wider px-1 mb-2">
+            Today ({today.length})
+          </p>
+          <div className="space-y-2">
+            {today.map(l => <LeadRow key={l.id} lead={l} isOverdue={false} />)}
+          </div>
+        </div>
+      )}
+      {tomorrow.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider px-1 mb-2">
+            Tomorrow ({tomorrow.length})
+          </p>
+          <div className="space-y-2">
+            {tomorrow.map(l => <LeadRow key={l.id} lead={l} isOverdue={false} />)}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
