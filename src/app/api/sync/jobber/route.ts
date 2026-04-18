@@ -257,7 +257,8 @@ export async function POST() {
           0
         )
         const laborCents = Math.round(totalHours * BURDENED_LABOR_RATE * 100)
-        const revenueCents = Math.round((j.total?.value || 0) * 100)
+        // Job.total is a Float scalar (not an object) per Jobber schema
+        const revenueCents = Math.round((j.total || 0) * 100)
         const margin = grossMargin(revenueCents, laborCents)
 
         const { data: client } = await db
@@ -304,31 +305,40 @@ export async function POST() {
       cursor = data.invoices?.pageInfo?.hasNextPage ? data.invoices.pageInfo.endCursor : null
 
       for (const inv of nodes) {
-        const amountCents = Math.round((inv.total?.value || 0) * 100)
-        const balanceCents = Math.round((inv.balance?.value || 0) * 100)
-        const status = mapJobberInvoiceStatus(inv.status, inv.dueDate)
+        // amounts.total / amounts.balance come from Invoice.amounts (InvoiceAmounts type)
+        // invoiceNet is a fallback Float scalar also on Invoice
+        const amountCents = Math.round(((inv.amounts?.total ?? inv.invoiceNet) || 0) * 100)
+        const balanceCents = Math.round((inv.amounts?.balance || 0) * 100)
+        // invoiceStatus replaces the removed `status` field
+        const status = mapJobberInvoiceStatus(inv.invoiceStatus || '', inv.dueDate)
 
-        // Resolve FK: client
-        const { data: client } = await db
-          .from('clients')
-          .select('id')
-          .eq('jobber_id', inv.client?.id)
-          .single()
+        // Client is not a direct field on Invoice — resolve via the first linked job
+        // Invoice.jobs is a connection (JobConnection); nodes are Job objects with client
+        const firstLinkedJob = inv.jobs?.nodes?.[0] ?? null
+        const clientJobberId = firstLinkedJob?.client?.id ?? null
+        let client: { id: string } | null = null
+        if (clientJobberId) {
+          const { data: c } = await db
+            .from('clients')
+            .select('id')
+            .eq('jobber_id', clientJobberId)
+            .single()
+          client = c ?? null
+        }
 
-        // Resolve FK: job (optional — invoices can exist without a linked job)
-        // Query uses singular `job { id }` — Jobber invoices link to one job
+        // Resolve FK: job (optional)
         let jobId: string | null = null
-        const linkedJobId = inv.job?.id ?? inv.jobs?.nodes?.[0]?.id ?? null
-        if (linkedJobId) {
+        if (firstLinkedJob?.id) {
           const { data: job } = await db
             .from('jobs')
             .select('id')
-            .eq('jobber_id', linkedJobId)
+            .eq('jobber_id', firstLinkedJob.id)
             .single()
           jobId = job?.id ?? null
         }
 
         if (client) {
+          // receivedDate replaces the removed paidDate field
           const { error } = await db.from('invoices').upsert({
             jobber_id: inv.id,
             invoice_number: inv.invoiceNumber || `JB-${inv.id.slice(-8).toUpperCase()}`,
@@ -339,7 +349,7 @@ export async function POST() {
             status,
             issue_date: inv.issuedDate || null,
             due_date: inv.dueDate || null,
-            paid_date: status === 'paid' ? (inv.paidDate || null) : null,
+            paid_date: status === 'paid' ? (inv.receivedDate || null) : null,
           }, { onConflict: 'jobber_id' })
           if (!error) results.invoices++
         }
@@ -378,7 +388,19 @@ export async function POST() {
 
   return NextResponse.json({
     success: true,
-    synced: results,
+    synced: {
+      clients: results.clients,
+      jobs: results.jobs,
+      invoices: results.invoices,
+      errors: results.errors.length,
+    },
+    // Human-readable summary for the settings page
+    summary: [
+      `${results.clients} client${results.clients !== 1 ? 's' : ''} → clients table`,
+      `${results.jobs} job${results.jobs !== 1 ? 's' : ''} → jobs table (contract value, margin, timesheets)`,
+      `${results.invoices} invoice${results.invoices !== 1 ? 's' : ''} → invoices table (amount, balance, status)`,
+    ].join(' · '),
+    errors: results.errors,
     synced_at: syncedAt,
   })
 }
