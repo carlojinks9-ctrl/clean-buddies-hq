@@ -7,10 +7,11 @@ import { Button } from '@/components/ui/Button'
 import {
   Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, MessageSquare,
   Flag, FlagOff, ChevronDown, ChevronUp, RefreshCw, ArrowLeft,
-  ArrowRight, UserPlus, ExternalLink, Clock, AlertTriangle, CheckCircle2,
+  ArrowRight, UserPlus, ExternalLink, Clock, AlertTriangle, CheckCircle2, XCircle,
 } from 'lucide-react'
-import { formatDistanceToNow, isToday, startOfDay } from 'date-fns'
+import { formatDistanceToNow, isToday } from 'date-fns'
 import { formatDuration, normalizePhone, QUO_MISSED_STATUSES } from '@/lib/quo'
+import { buildContactMap, getDisplayInfo, CONTACT_TYPE_STYLE, type ContactMap } from '@/lib/contacts'
 import type { QuoCall, QuoMessage } from '@/types'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ interface ConvertForm {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function getDisplayName(item: QuoCall | QuoMessage): string {
+function getRawDisplayName(item: QuoCall | QuoMessage): string {
   if (item.contact_name) return item.contact_name
   return item.direction === 'inbound' ? item.from_number : item.to_number
 }
@@ -59,6 +60,25 @@ export default function CommunicationsPage() {
   const [converting, setConverting] = useState(false)
   const [convertedIds, setConvertedIds] = useState<Set<string>>(new Set())
   const [flagUpdating, setFlagUpdating] = useState<string | null>(null)
+  const [contactMap, setContactMap] = useState<ContactMap>({})
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
+
+  const loadContactMap = useCallback(async () => {
+    try {
+      const [contactsRes, leadsRes, clientsRes, empRes] = await Promise.all([
+        supabase.from('quo_contacts').select('id, name, phone, company').limit(500),
+        supabase.from('leads').select('id, name, phone, status').limit(500),
+        supabase.from('clients').select('id, name, company_name, phone').limit(500),
+        supabase.from('employees').select('id, name, phone').eq('status', 'active'),
+      ])
+      setContactMap(buildContactMap(
+        (contactsRes.data || []) as Array<{ id: string; name: string; phone: string; company?: string | null }>,
+        (leadsRes.data || []) as Array<{ id: string; name: string; phone?: string | null; status?: string }>,
+        (clientsRes.data || []) as Array<{ id: string; name?: string | null; company_name?: string | null; phone?: string | null }>,
+        (empRes.data || []) as Array<{ id: string; name: string; phone?: string | null }>,
+      ))
+    } catch { /* non-critical */ }
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -71,7 +91,7 @@ export default function CommunicationsPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); loadContactMap() }, [load, loadContactMap])
 
   // ── KPIs ────────────────────────────────────────────────────────────────
 
@@ -296,8 +316,9 @@ export default function CommunicationsPage() {
             </div>
           </CardHeader>
           <div className="divide-y divide-white/[0.04]">
-            {allFlagged.slice(0, 8).map(item => {
-              const displayName = getDisplayName(item.data)
+            {allFlagged.slice(0, 8).filter(item => !dismissedIds.has(item.data.id)).map(item => {
+              const extPhone = getExternalPhone(item.data)
+              const { name: resolvedName, resolved } = getDisplayInfo(item.data.contact_name, extPhone, contactMap)
               const isConverted = convertedIds.has(item.data.id)
 
               return (
@@ -312,7 +333,12 @@ export default function CommunicationsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-text-primary">{displayName}</span>
+                      <span className="text-sm font-medium text-text-primary">{resolvedName}</span>
+                      {resolved && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${CONTACT_TYPE_STYLE[resolved.type].color}`}>
+                          {resolved.context ?? CONTACT_TYPE_STYLE[resolved.type].label}
+                        </span>
+                      )}
                       <Badge variant="amber" dot>{item.data.flag_reason ?? 'Flagged'}</Badge>
                     </div>
                     {item.type === 'call' && (item.data as QuoCall).ai_summary && (
@@ -348,6 +374,13 @@ export default function CommunicationsPage() {
                       title="Unflag"
                     >
                       <FlagOff className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setDismissedIds(prev => new Set(prev).add(item.data.id))}
+                      className="p-1.5 rounded-lg hover:bg-accent-red/10 text-text-tertiary hover:text-accent-red transition-colors"
+                      title="Dismiss"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -426,8 +459,8 @@ export default function CommunicationsPage() {
                 onClick={() => setFilter(tab.key)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                   filter === tab.key
-                    ? 'bg-brand-green/15 text-brand-green'
-                    : 'text-text-tertiary hover:text-text-secondary hover:bg-white/[0.04]'
+                    ? 'bg-brand-blue/10 text-brand-blue'
+                    : 'text-text-tertiary hover:text-text-secondary hover:bg-bg-elevated'
                 }`}
               >
                 {tab.label}
@@ -448,7 +481,8 @@ export default function CommunicationsPage() {
           <div className="divide-y divide-white/[0.03]">
             {timeline.map(item => {
               const isExpanded = expanded === item.data.id
-              const displayName = getDisplayName(item.data)
+              const extPhone = getExternalPhone(item.data)
+              const { name: resolvedName, resolved } = getDisplayInfo(item.data.contact_name, extPhone, contactMap)
               const isConverted = convertedIds.has(item.data.id)
 
               if (item.type === 'call') {
@@ -456,9 +490,9 @@ export default function CommunicationsPage() {
                 const missed = isMissedCall(call)
 
                 return (
-                  <div key={call.id} className={isExpanded ? 'bg-white/[0.02]' : ''}>
+                  <div key={call.id} className={isExpanded ? 'bg-bg-elevated/30' : ''}>
                     <button
-                      className="w-full flex items-start gap-3 px-4 py-3 hover:bg-white/[0.03] transition-colors text-left"
+                      className="w-full flex items-start gap-3 px-4 py-3 hover:bg-bg-elevated/20 transition-colors text-left"
                       onClick={() => setExpanded(isExpanded ? null : call.id)}
                     >
                       <div className={`w-8 h-8 rounded-xl ${callBg(call)} flex items-center justify-center flex-shrink-0 mt-0.5`}>
@@ -466,7 +500,12 @@ export default function CommunicationsPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-text-primary">{displayName}</span>
+                          <span className="text-sm font-medium text-text-primary">{resolvedName}</span>
+                          {resolved && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${CONTACT_TYPE_STYLE[resolved.type].color}`}>
+                              {resolved.context ?? CONTACT_TYPE_STYLE[resolved.type].label}
+                            </span>
+                          )}
                           {call.direction === 'inbound'
                             ? <ArrowLeft className="w-3 h-3 text-accent-blue flex-shrink-0" />
                             : <ArrowRight className="w-3 h-3 text-brand-green flex-shrink-0" />
@@ -602,9 +641,9 @@ export default function CommunicationsPage() {
               const msg = item.data as QuoMessage
 
               return (
-                <div key={msg.id} className={isExpanded ? 'bg-white/[0.02]' : ''}>
+                <div key={msg.id} className={isExpanded ? 'bg-bg-elevated/30' : ''}>
                   <button
-                    className="w-full flex items-start gap-3 px-4 py-3 hover:bg-white/[0.03] transition-colors text-left"
+                    className="w-full flex items-start gap-3 px-4 py-3 hover:bg-bg-elevated/20 transition-colors text-left"
                     onClick={() => expandMessage(msg)}
                   >
                     <div className="w-8 h-8 rounded-xl bg-accent-blue/10 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -612,7 +651,12 @@ export default function CommunicationsPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-text-primary">{displayName}</span>
+                        <span className="text-sm font-medium text-text-primary">{resolvedName}</span>
+                        {resolved && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${CONTACT_TYPE_STYLE[resolved.type].color}`}>
+                            {resolved.context ?? CONTACT_TYPE_STYLE[resolved.type].label}
+                          </span>
+                        )}
                         {msg.direction === 'inbound'
                           ? <ArrowLeft className="w-3 h-3 text-accent-blue flex-shrink-0" />
                           : <ArrowRight className="w-3 h-3 text-brand-green flex-shrink-0" />
@@ -633,7 +677,7 @@ export default function CommunicationsPage() {
                   {isExpanded && (
                     <div className="px-4 pb-4 border-t border-white/[0.04]">
                       <div className="flex items-center justify-between pt-3 mb-3">
-                        <p className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium">Thread with {displayName}</p>
+                        <p className="text-[11px] text-text-tertiary uppercase tracking-wider font-medium">Thread with {resolvedName}</p>
                         <div className="flex items-center gap-2">
                           {isConverted ? (
                             <span className="flex items-center gap-1 text-[11px] text-brand-green">

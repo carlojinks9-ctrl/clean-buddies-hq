@@ -318,15 +318,31 @@ export async function POST(request: NextRequest) {
       `✅ Supply request logged: <b>${parsed.item}</b> · ${qtyDisplay} · ${parsed.jobName || 'no job specified'} · urgency ${urgencyDisplay}`
     )
 
-    await notifySupplyRequest({
-      item: parsed.item,
-      quantity: parsed.quantity,
-      unit: parsed.unit,
-      job_name: parsed.jobName || null,
-      requested_by: senderName,
-      home_depot_url: hdUrl,
-      urgency: parsed.urgency,
-    })
+    // Dedup management notification: if same person sent supply request within 5 min, skip
+    // (they're building a list — the dashboard will show all items anyway)
+    const senderSlugSupply = senderName.replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 20)
+    const supplyDedupKey = `telegram_supply_${senderSlugSupply}_last`
+    let skipSupplyNotify = false
+    try {
+      const { data: supplyDedup } = await db.from('app_settings').select('value').eq('key', supplyDedupKey).maybeSingle()
+      if (supplyDedup?.value) {
+        const minsSince = (Date.now() - new Date(supplyDedup.value).getTime()) / 60_000
+        skipSupplyNotify = minsSince < 5
+      }
+      try { await db.from('app_settings').upsert({ key: supplyDedupKey, value: new Date().toISOString(), description: `Last supply request: ${senderName}` }, { onConflict: 'key' }) } catch { /* non-critical */ }
+    } catch { /* non-critical */ }
+
+    if (!skipSupplyNotify) {
+      await notifySupplyRequest({
+        item: parsed.item,
+        quantity: parsed.quantity,
+        unit: parsed.unit,
+        job_name: parsed.jobName || null,
+        requested_by: senderName,
+        home_depot_url: hdUrl,
+        urgency: parsed.urgency,
+      })
+    }
 
     return NextResponse.json({ ok: true })
   }
@@ -394,13 +410,53 @@ export async function POST(request: NextRequest) {
     const flag = checkMessage(text)
     if (flag) {
       console.log(`[Telegram] Flagged message — severity: ${flag.severity}, category: ${flag.category}`)
-      await sendFlaggedMessage({
-        original_text: text,
-        sender_name: senderName,
-        severity: flag.severity,
-        category: flag.category,
-        chat_title: chatTitle,
-      })
+
+      // Dedup: only alert once per sender+category within the dedup window
+      // High severity = 30 min window; Medium/Low = 90 min window
+      const dedupMinutes = flag.severity === 'high' ? 30 : 90
+      const senderSlug = senderName.replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 20)
+      const dedupKey = `telegram_dedup_${senderSlug}_${flag.category}`
+
+      let shouldAlert = true
+      try {
+        const { data: existing } = await db
+          .from('app_settings')
+          .select('value')
+          .eq('key', dedupKey)
+          .maybeSingle()
+
+        if (existing?.value) {
+          const lastAlertAt = new Date(existing.value).getTime()
+          const minutesSinceLastAlert = (Date.now() - lastAlertAt) / 60_000
+          if (minutesSinceLastAlert < dedupMinutes) {
+            shouldAlert = false
+            console.log(`[Telegram] Dedup skip — ${senderName}/${flag.category}, last alert ${Math.round(minutesSinceLastAlert)}m ago (window: ${dedupMinutes}m)`)
+          }
+        }
+      } catch (err) {
+        console.warn('[Telegram] Dedup check failed (non-fatal):', err)
+      }
+
+      if (shouldAlert) {
+        await sendFlaggedMessage({
+          original_text: text,
+          sender_name: senderName,
+          severity: flag.severity,
+          category: flag.category,
+          chat_title: chatTitle,
+        })
+
+        // Record the alert timestamp
+        try {
+          await db.from('app_settings').upsert({
+            key: dedupKey,
+            value: new Date().toISOString(),
+            description: `Last Telegram alert: ${senderName} / ${flag.category}`,
+          }, { onConflict: 'key' })
+        } catch (saveErr) {
+          console.warn('[Telegram] Dedup save failed (non-fatal):', saveErr)
+        }
+      }
     }
   }
 
