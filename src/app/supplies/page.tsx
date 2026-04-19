@@ -6,12 +6,12 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { MonoValue } from '@/components/ui/MonoValue'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { ShoppingCart, Plus, ExternalLink, Check, Package, Clock } from 'lucide-react'
+import { ShoppingCart, Plus, ExternalLink, Check, Package, Clock, Pencil, Trash2, X, Save } from 'lucide-react'
 import { format } from 'date-fns'
 import type { SupplyRequest } from '@/types'
 import { clsx } from 'clsx'
 
-const statusMeta: Record<string, { variant: any; label: string; icon: any }> = {
+const statusMeta: Record<string, { variant: 'amber' | 'blue' | 'green'; label: string; icon: React.ElementType }> = {
   pending:  { variant: 'amber', label: 'Pending',  icon: Clock },
   ordered:  { variant: 'blue',  label: 'Ordered',  icon: Package },
   received: { variant: 'green', label: 'Received', icon: Check },
@@ -22,6 +22,14 @@ const priorityMeta: Record<string, string> = {
   high:   'text-accent-red',
 }
 
+interface EditState {
+  item_name: string
+  quantity: string
+  job_name: string
+  priority: string
+  estimated_cost_cents: string
+}
+
 export default function SuppliesPage() {
   const [items, setItems] = useState<SupplyRequest[]>([])
   const [loading, setLoading] = useState(true)
@@ -29,6 +37,9 @@ export default function SuppliesPage() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ item_name: '', quantity: '1', unit: '', job_name: '', requested_by: '', priority: 'medium', estimated_cost_cents: '' })
   const [submitting, setSubmitting] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editState, setEditState] = useState<EditState>({ item_name: '', quantity: '1', job_name: '', priority: 'medium', estimated_cost_cents: '' })
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -45,6 +56,36 @@ export default function SuppliesPage() {
     if (status === 'received') update.received_at = new Date().toISOString()
     await supabase.from('supply_requests').update(update).eq('id', id)
     setItems(prev => prev.map(i => i.id === id ? { ...i, ...update } as SupplyRequest : i))
+  }
+
+  function startEdit(item: SupplyRequest) {
+    setEditingId(item.id)
+    setEditState({
+      item_name: item.item_name,
+      quantity: String(item.quantity),
+      job_name: item.job_name || '',
+      priority: item.priority,
+      estimated_cost_cents: item.estimated_cost_cents ? String(item.estimated_cost_cents / 100) : '',
+    })
+  }
+
+  async function saveEdit(id: string) {
+    const update = {
+      item_name: editState.item_name.trim(),
+      quantity: parseInt(editState.quantity) || 1,
+      job_name: editState.job_name.trim() || null,
+      priority: editState.priority,
+      estimated_cost_cents: editState.estimated_cost_cents ? Math.round(parseFloat(editState.estimated_cost_cents) * 100) : null,
+    }
+    await supabase.from('supply_requests').update(update).eq('id', id)
+    setItems(prev => prev.map(i => i.id === id ? { ...i, ...update } as SupplyRequest : i))
+    setEditingId(null)
+  }
+
+  async function deleteItem(id: string) {
+    await supabase.from('supply_requests').delete().eq('id', id)
+    setItems(prev => prev.filter(i => i.id !== id))
+    setDeletingId(null)
   }
 
   async function addItem(e: React.FormEvent) {
@@ -93,7 +134,7 @@ export default function SuppliesPage() {
               onClick={() => setStatusFilter(s)}
               className={clsx(
                 'px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-all',
-                statusFilter === s ? 'bg-white/10 text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-white/[0.04]'
+                statusFilter === s ? 'bg-bg-elevated text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
               )}
             >
               {s}
@@ -145,41 +186,94 @@ export default function SuppliesPage() {
 
       {/* Table */}
       <Card>
-        <div className="px-4 py-3 border-b border-white/[0.06] flex items-center gap-2">
+        <div className="px-4 py-3 border-b border-subtle flex items-center gap-2">
           <ShoppingCart className="w-4 h-4 text-text-tertiary" />
           <h2 className="text-sm font-semibold">Supply Requests</h2>
         </div>
+
         {/* Mobile card list */}
-        <div className="md:hidden divide-y divide-white/[0.04]">
+        <div className="md:hidden divide-y divide-subtle">
           {loading ? (
             Array.from({length: 4}).map((_,i) => <div key={i} className="p-4"><Skeleton lines={2} /></div>)
           ) : filtered.map(item => {
             const meta = statusMeta[item.status]
+            const isEditing = editingId === item.id
+            const isDeleting = deletingId === item.id
             return (
               <div key={item.id} className="p-4">
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div>
-                    <p className="font-medium text-text-primary">{item.item_name}</p>
-                    <p className="text-[11px] text-text-tertiary">x{item.quantity}{item.unit ? ` ${item.unit}` : ''}{item.job_name ? ` · ${item.job_name}` : ''}</p>
+                {isEditing ? (
+                  <div className="space-y-2">
+                    <input
+                      value={editState.item_name}
+                      onChange={e => setEditState(p => ({...p, item_name: e.target.value}))}
+                      className="w-full px-2 py-1 text-sm"
+                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="number" min="1"
+                        value={editState.quantity}
+                        onChange={e => setEditState(p => ({...p, quantity: e.target.value}))}
+                        className="w-16 px-2 py-1 text-sm"
+                        placeholder="Qty"
+                      />
+                      <input
+                        value={editState.job_name}
+                        onChange={e => setEditState(p => ({...p, job_name: e.target.value}))}
+                        className="flex-1 px-2 py-1 text-sm"
+                        placeholder="Job name"
+                      />
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => setEditingId(null)} className="flex items-center gap-1 text-[11px] text-text-tertiary hover:text-text-secondary px-2 py-1">
+                        <X className="w-3 h-3" /> Cancel
+                      </button>
+                      <button onClick={() => saveEdit(item.id)} className="flex items-center gap-1 text-[11px] text-brand-blue hover:text-brand-blue-dim px-2 py-1 bg-brand-blue/10 rounded">
+                        <Save className="w-3 h-3" /> Save
+                      </button>
+                    </div>
                   </div>
-                  <Badge variant={meta.variant}>{meta.label}</Badge>
-                </div>
-                <div className="flex items-center gap-4 flex-wrap">
-                  {item.requested_by && <span className="text-[11px] text-text-secondary">{item.requested_by}</span>}
-                  <span className={`text-[11px] font-medium capitalize ${priorityMeta[item.priority]}`}>{item.priority}</span>
-                  {item.estimated_cost_cents && <MonoValue cents={item.estimated_cost_cents} size="sm" showCents />}
-                  <div className="ml-auto flex items-center gap-2">
-                    {item.status === 'pending' && (
-                      <button onClick={() => updateStatus(item.id, 'ordered')} className="text-[10px] px-2 py-1 rounded bg-accent-blue/10 text-accent-blue hover:bg-accent-blue/20 transition-colors min-h-[32px]">Mark Ordered</button>
-                    )}
-                    {item.status === 'ordered' && (
-                      <button onClick={() => updateStatus(item.id, 'received')} className="text-[10px] px-2 py-1 rounded bg-brand-green/10 text-brand-green hover:bg-brand-green/20 transition-colors min-h-[32px]">Mark Received</button>
-                    )}
+                ) : isDeleting ? (
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-text-secondary flex-1">Delete &ldquo;{item.item_name}&rdquo;?</span>
+                    <button onClick={() => setDeletingId(null)} className="text-[11px] text-text-tertiary hover:text-text-secondary px-2 py-1">Cancel</button>
+                    <button onClick={() => deleteItem(item.id)} className="text-[11px] text-accent-red hover:text-accent-red/80 px-2 py-1 bg-accent-red/10 rounded">Delete</button>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div>
+                        <p className="font-medium text-text-primary">{item.item_name}</p>
+                        <p className="text-[11px] text-text-tertiary">x{item.quantity}{item.unit ? ` ${item.unit}` : ''}{item.job_name ? ` · ${item.job_name}` : ''}</p>
+                      </div>
+                      <Badge variant={meta.variant}>{meta.label}</Badge>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {item.requested_by && <span className="text-[11px] text-text-secondary">{item.requested_by}</span>}
+                      <span className={`text-[11px] font-medium capitalize ${priorityMeta[item.priority]}`}>{item.priority}</span>
+                      {item.estimated_cost_cents && <MonoValue cents={item.estimated_cost_cents} size="sm" showCents />}
+                      <div className="ml-auto flex items-center gap-1.5">
+                        {item.status === 'pending' && (
+                          <button onClick={() => updateStatus(item.id, 'ordered')} className="text-[10px] px-2 py-1 rounded bg-accent-blue/10 text-accent-blue hover:bg-accent-blue/20 transition-colors min-h-[32px]">Ordered</button>
+                        )}
+                        {item.status === 'ordered' && (
+                          <button onClick={() => updateStatus(item.id, 'received')} className="text-[10px] px-2 py-1 rounded bg-brand-green/10 text-brand-green hover:bg-brand-green/20 transition-colors min-h-[32px]">Received</button>
+                        )}
+                        <button onClick={() => startEdit(item)} className="p-1.5 rounded hover:bg-bg-elevated text-text-tertiary hover:text-text-secondary transition-colors min-h-[32px]">
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                        <button onClick={() => setDeletingId(item.id)} className="p-1.5 rounded hover:bg-accent-red/10 text-text-tertiary hover:text-accent-red transition-colors min-h-[32px]">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )
           })}
+          {!loading && filtered.length === 0 && (
+            <div className="p-8 text-center text-text-tertiary text-sm">No supply requests</div>
+          )}
         </div>
 
         {/* Desktop table */}
@@ -205,6 +299,81 @@ export default function SuppliesPage() {
                 ))
               ) : filtered.map(item => {
                 const meta = statusMeta[item.status]
+                const isEditing = editingId === item.id
+                const isDeleting = deletingId === item.id
+
+                if (isEditing) {
+                  return (
+                    <tr key={item.id} className="bg-bg-elevated/50">
+                      <td colSpan={4}>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={editState.item_name}
+                            onChange={e => setEditState(p => ({...p, item_name: e.target.value}))}
+                            className="flex-1 px-2 py-1 text-sm"
+                            autoFocus
+                          />
+                          <input
+                            type="number" min="1"
+                            value={editState.quantity}
+                            onChange={e => setEditState(p => ({...p, quantity: e.target.value}))}
+                            className="w-16 px-2 py-1 text-sm"
+                          />
+                          <input
+                            value={editState.job_name}
+                            onChange={e => setEditState(p => ({...p, job_name: e.target.value}))}
+                            className="w-32 px-2 py-1 text-sm"
+                            placeholder="Job"
+                          />
+                          <select
+                            value={editState.priority}
+                            onChange={e => setEditState(p => ({...p, priority: e.target.value}))}
+                            className="px-2 py-1 text-sm"
+                          >
+                            {['low','medium','high'].map(p => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        </div>
+                      </td>
+                      <td className="text-right">
+                        <input
+                          type="number" step="0.01"
+                          value={editState.estimated_cost_cents}
+                          onChange={e => setEditState(p => ({...p, estimated_cost_cents: e.target.value}))}
+                          className="w-24 px-2 py-1 text-sm font-mono text-right"
+                          placeholder="0.00"
+                        />
+                      </td>
+                      <td colSpan={3} />
+                      <td>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setEditingId(null)} className="p-1 rounded hover:bg-bg-elevated text-text-tertiary hover:text-text-secondary transition-colors">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => saveEdit(item.id)} className="flex items-center gap-1 px-2 py-0.5 rounded bg-brand-blue/10 text-brand-blue hover:bg-brand-blue/20 text-[10px] transition-colors">
+                            <Save className="w-3 h-3" /> Save
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                }
+
+                if (isDeleting) {
+                  return (
+                    <tr key={item.id} className="bg-accent-red/5">
+                      <td colSpan={8}>
+                        <span className="text-sm text-accent-red">Delete &ldquo;{item.item_name}&rdquo;? This cannot be undone.</span>
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setDeletingId(null)} className="text-[10px] px-2 py-0.5 rounded text-text-tertiary hover:text-text-secondary hover:bg-bg-elevated transition-colors">Cancel</button>
+                          <button onClick={() => deleteItem(item.id)} className="text-[10px] px-2 py-0.5 rounded bg-accent-red/10 text-accent-red hover:bg-accent-red/20 transition-colors">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                }
+
                 return (
                   <tr key={item.id}>
                     <td>
@@ -250,7 +419,7 @@ export default function SuppliesPage() {
                             onClick={() => updateStatus(item.id, 'ordered')}
                             className="text-[10px] px-2 py-0.5 rounded bg-accent-blue/10 text-accent-blue hover:bg-accent-blue/20 transition-colors"
                           >
-                            Mark Ordered
+                            Ordered
                           </button>
                         )}
                         {item.status === 'ordered' && (
@@ -258,14 +427,31 @@ export default function SuppliesPage() {
                             onClick={() => updateStatus(item.id, 'received')}
                             className="text-[10px] px-2 py-0.5 rounded bg-brand-green/10 text-brand-green hover:bg-brand-green/20 transition-colors"
                           >
-                            Mark Received
+                            Received
                           </button>
                         )}
+                        <button
+                          onClick={() => startEdit(item)}
+                          className="p-1 rounded hover:bg-bg-elevated text-text-tertiary hover:text-text-secondary transition-colors"
+                          title="Edit"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => setDeletingId(item.id)}
+                          className="p-1 rounded hover:bg-accent-red/10 text-text-tertiary hover:text-accent-red transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </div>
                     </td>
                   </tr>
                 )
               })}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={9} className="text-center text-text-tertiary py-8">No supply requests</td></tr>
+              )}
             </tbody>
           </table>
         </div>

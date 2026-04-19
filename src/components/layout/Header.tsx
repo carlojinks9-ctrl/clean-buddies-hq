@@ -5,6 +5,7 @@ import { RefreshCw, Search, Menu } from 'lucide-react'
 import { clsx } from 'clsx'
 import { format } from 'date-fns'
 import { NotificationBell } from './NotificationBell'
+import { ThemeToggle } from './ThemeToggle'
 
 const PAGE_TITLES: Record<string, string> = {
   '/':                'Dashboard',
@@ -81,6 +82,9 @@ export function Header({ lastSynced, onSync, syncing, onMenuToggle }: HeaderProp
         <span className="hidden md:inline">Search</span>
         <kbd className="hidden md:inline ml-1 text-[10px] bg-white/[0.06] px-1.5 py-0.5 rounded">⌘K</kbd>
       </button>
+
+      {/* Theme toggle */}
+      <ThemeToggle />
 
       {/* Notification bell — real component */}
       <NotificationBell />

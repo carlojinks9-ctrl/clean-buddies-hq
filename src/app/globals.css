@@ -2,66 +2,93 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --bg-base: #0A0A0F;
-  --bg-surface: #12121A;
-  --bg-elevated: #1A1A24;
-  --brand-green: #1D9E75;
-  --accent-amber: #EF9F27;
-  --accent-red: #E24B4A;
-  --accent-blue: #378ADD;
-  --text-primary: #E8E8ED;
-  --text-secondary: #8A8A96;
-  --text-tertiary: #55555F;
+/* ─── Dark mode (default) ─────────────────────────────────────────────────── */
+:root,
+html.dark {
+  --bg-base:     10 10 15;
+  --bg-surface:  18 18 26;
+  --bg-elevated: 26 26 36;
+  --text-primary:   232 232 237;
+  --text-secondary: 138 138 150;
+  --text-tertiary:  85 85 95;
   --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.10);
+  --scrollbar-track: #0A0A0F;
+  --scrollbar-thumb: #2A2A35;
+  --scrollbar-thumb-hover: #3A3A48;
+  --input-bg: #1A1A24;
+  --input-border: rgba(255, 255, 255, 0.08);
+  --table-row-hover: rgba(255, 255, 255, 0.02);
+  --table-row-border: rgba(255, 255, 255, 0.03);
+  --kanban-bg: #1A1A24;
+  --kanban-hover-border: rgba(255, 255, 255, 0.12);
+  color-scheme: dark;
+}
+
+/* ─── Light mode ──────────────────────────────────────────────────────────── */
+html.light {
+  --bg-base:     248 248 252;
+  --bg-surface:  255 255 255;
+  --bg-elevated: 242 242 248;
+  --text-primary:   12 12 18;
+  --text-secondary: 72 72 86;
+  --text-tertiary:  130 130 148;
+  --border: rgba(0, 0, 0, 0.07);
+  --border-strong: rgba(0, 0, 0, 0.12);
+  --scrollbar-track: #F8F8FC;
+  --scrollbar-thumb: #D0D0DC;
+  --scrollbar-thumb-hover: #B8B8C8;
+  --input-bg: #F2F2F8;
+  --input-border: rgba(0, 0, 0, 0.10);
+  --table-row-hover: rgba(0, 0, 0, 0.02);
+  --table-row-border: rgba(0, 0, 0, 0.04);
+  --kanban-bg: #F2F2F8;
+  --kanban-hover-border: rgba(0, 0, 0, 0.14);
+  color-scheme: light;
 }
 
 * {
   box-sizing: border-box;
 }
 
-html {
-  color-scheme: dark;
-}
-
 body {
-  background-color: var(--bg-base);
-  color: var(--text-primary);
+  background-color: rgb(var(--bg-base));
+  color: rgb(var(--text-primary));
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar */
+/* ─── Scrollbar ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-base);
+  background: var(--scrollbar-track);
 }
 ::-webkit-scrollbar-thumb {
-  background: #2A2A35;
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3A3A48;
+  background: var(--scrollbar-thumb-hover);
 }
 
-/* Monospace numbers */
+/* ─── Monospace numbers ───────────────────────────────────────────────────── */
 .mono {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-variant-numeric: tabular-nums;
 }
 
-/* Card base */
+/* ─── Card base ───────────────────────────────────────────────────────────── */
 .card {
-  background: var(--bg-surface);
+  background: rgb(var(--bg-surface));
   border: 1px solid var(--border);
   border-radius: 12px;
 }
 
-/* Status dot */
+/* ─── Status dot ──────────────────────────────────────────────────────────── */
 .status-dot {
   width: 8px;
   height: 8px;
@@ -70,7 +97,7 @@ body {
   flex-shrink: 0;
 }
 
-/* Pulsing live indicator */
+/* ─── Pulsing live indicator ──────────────────────────────────────────────── */
 @keyframes pulse-ring {
   0% { transform: scale(0.8); opacity: 1; }
   100% { transform: scale(2); opacity: 0; }
@@ -81,16 +108,16 @@ body {
   position: absolute;
   inset: -3px;
   border-radius: 50%;
-  background: var(--brand-green);
+  background: #1D9E75;
   animation: pulse-ring 1.5s ease-out infinite;
 }
 
-/* Transitions */
+/* ─── Transitions ─────────────────────────────────────────────────────────── */
 a, button {
   transition: all 0.15s ease;
 }
 
-/* Table styles */
+/* ─── Table styles ────────────────────────────────────────────────────────── */
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -102,16 +129,16 @@ a, button {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  color: rgb(var(--text-tertiary));
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 
 .data-table td {
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--table-row-border);
   font-size: 13px;
-  color: var(--text-primary);
+  color: rgb(var(--text-primary));
 }
 
 .data-table tr:last-child td {
@@ -119,14 +146,14 @@ a, button {
 }
 
 .data-table tbody tr:hover {
-  background: rgba(255,255,255,0.02);
+  background: var(--table-row-hover);
 }
 
-/* Input styles */
+/* ─── Input styles ────────────────────────────────────────────────────────── */
 input, select, textarea {
-  background: var(--bg-elevated);
-  border: 1px solid rgba(255,255,255,0.08);
-  color: var(--text-primary);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: rgb(var(--text-primary));
   border-radius: 8px;
   font-family: inherit;
   font-size: 13px;
@@ -135,17 +162,17 @@ input, select, textarea {
 
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: var(--brand-green);
-  box-shadow: 0 0 0 2px rgba(29, 158, 117, 0.1);
+  border-color: #38b6ff;
+  box-shadow: 0 0 0 2px rgba(56, 182, 255, 0.12);
 }
 
 input::placeholder {
-  color: var(--text-tertiary);
+  color: rgb(var(--text-tertiary));
 }
 
-/* Kanban card */
+/* ─── Kanban card ─────────────────────────────────────────────────────────── */
 .kanban-card {
-  background: var(--bg-elevated);
+  background: var(--kanban-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px;
@@ -154,7 +181,39 @@ input::placeholder {
 }
 
 .kanban-card:hover {
-  border-color: rgba(255,255,255,0.12);
+  border-color: var(--kanban-hover-border);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* ─── Light mode structural overrides ────────────────────────────────────── */
+/* Fix hardcoded border-white/* classes in components */
+html.light .border-white\/\[0\.06\] {
+  border-color: rgba(0, 0, 0, 0.07) !important;
+}
+html.light .border-white\/\[0\.08\] {
+  border-color: rgba(0, 0, 0, 0.10) !important;
+}
+
+/* Sidebar in light mode */
+html.light aside {
+  background: rgb(var(--bg-surface));
+  border-right-color: var(--border);
+}
+
+/* Header backdrop in light mode */
+html.light header {
+  background: rgba(248, 248, 252, 0.85) !important;
+  border-bottom-color: var(--border);
+}
+
+/* bg-bg-base hardcoded classes */
+html.light .bg-bg-base {
+  background-color: rgb(var(--bg-base));
+}
+html.light .bg-bg-surface {
+  background-color: rgb(var(--bg-surface));
+}
+html.light .bg-bg-elevated {
+  background-color: rgb(var(--bg-elevated));
 }

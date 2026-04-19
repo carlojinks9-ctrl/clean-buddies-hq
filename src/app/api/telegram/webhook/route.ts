@@ -122,6 +122,21 @@ function homeDepotUrl(item: string) {
   return `https://www.homedepot.com/s/${encodeURIComponent(item)}`
 }
 
+/**
+ * Parse multi-item supply list. Handles formats like:
+ *   /supply\n- pink stuff 1 bottle\n- ram board 5 rolls
+ *   /supply\npink stuff 1 bottle\nram board 5 rolls
+ *
+ * Returns an array of parsed items (empty if not a list).
+ */
+function parseSupplyList(text: string): ParsedSupply[] {
+  const body = text.replace(/^\/supply\s*/i, '').trim()
+  const lines = body.split('\n').map(l => l.replace(/^[-•*]\s*/, '').trim()).filter(Boolean)
+  // Only treat as multi-item if there are 2+ lines
+  if (lines.length < 2) return []
+  return lines.map(line => parseSupplyCommand('/supply ' + line)).filter(Boolean) as ParsedSupply[]
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
@@ -224,17 +239,62 @@ export async function POST(request: NextRequest) {
 
   // ── /supply ───────────────────────────────────────────────────────────────
   if (text.startsWith('/supply')) {
+    const priorityMap: Record<number, 'low' | 'medium' | 'high'> = { 1: 'low', 2: 'medium', 3: 'high' }
+
+    // Check for multi-item list mode first (2+ newline-separated items)
+    const listItems = parseSupplyList(text)
+
+    if (listItems.length >= 2) {
+      // Multi-item mode
+      const rows = listItems.map(parsed => ({
+        item_name: parsed.item,
+        quantity: parsed.quantity,
+        unit: parsed.unit || null,
+        job_name: parsed.jobName || null,
+        requested_by: senderName,
+        priority: parsed.urgency ? (priorityMap[parsed.urgency] ?? 'medium') : 'medium',
+        status: 'pending',
+        home_depot_url: homeDepotUrl(parsed.item),
+        telegram_message_id: String(messageId),
+      }))
+
+      const { error: bulkErr } = await db.from('supply_requests').insert(rows)
+      if (bulkErr) console.error('[Telegram] bulk supply_requests insert error:', bulkErr)
+      else console.log(`[Telegram] Bulk supply: ${rows.length} items saved`)
+
+      const summary = listItems
+        .map(p => `• ${p.quantity}${p.unit ? ` ${p.unit}` : ''} ${p.item}${p.jobName ? ` (${p.jobName})` : ''}`)
+        .join('\n')
+
+      await replyToMessage(chatId, messageId,
+        `✅ <b>${listItems.length} supply requests logged:</b>\n${summary}`
+      )
+
+      // Notify management
+      if (MGMT_CHAT_ID && MGMT_CHAT_ID !== chatId) {
+        const mgmtSummary = listItems
+          .map(p => `• ${p.quantity}${p.unit ? ` ${p.unit}` : ''} ${p.item}`)
+          .join('\n')
+        await replyToMessage(MGMT_CHAT_ID, 0,
+          `📦 <b>${listItems.length} supply requests from ${senderName}:</b>\n${mgmtSummary}`
+        ).catch(() => {})
+      }
+
+      return NextResponse.json({ ok: true })
+    }
+
+    // Single-item mode
     const parsed = parseSupplyCommand(text)
     if (!parsed) {
       await replyToMessage(chatId, messageId,
         `❌ Usage: <code>/supply [item] [quantity] [job name]</code>\n` +
-        `Example: <code>/supply pink stuff 1 bottle lanai building 5</code>`
+        `Example: <code>/supply pink stuff 1 bottle lanai building 5</code>\n\n` +
+        `Multi-item: send each item on a new line after <code>/supply</code>`
       )
       return NextResponse.json({ ok: true })
     }
 
     const hdUrl = homeDepotUrl(parsed.item)
-    const priorityMap: Record<number, 'low' | 'medium' | 'high'> = { 1: 'low', 2: 'medium', 3: 'high' }
     const priority = parsed.urgency ? (priorityMap[parsed.urgency] ?? 'medium') : 'medium'
 
     const { error: supplyErr } = await db.from('supply_requests').insert({
@@ -254,12 +314,10 @@ export async function POST(request: NextRequest) {
     const qtyDisplay = parsed.unit ? `${parsed.quantity} ${parsed.unit}` : String(parsed.quantity)
     const urgencyDisplay = parsed.urgency ? String(parsed.urgency) : 'normal'
 
-    // Reply in crew chat (or wherever command was sent)
     await replyToMessage(chatId, messageId,
       `✅ Supply request logged: <b>${parsed.item}</b> · ${qtyDisplay} · ${parsed.jobName || 'no job specified'} · urgency ${urgencyDisplay}`
     )
 
-    // Notify management chat
     await notifySupplyRequest({
       item: parsed.item,
       quantity: parsed.quantity,

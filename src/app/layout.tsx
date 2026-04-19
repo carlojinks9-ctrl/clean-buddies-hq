@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         {/* Fonts */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -30,9 +30,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
         />
+        {/* Inline theme init — runs before paint to prevent flash */}
+        <script dangerouslySetInnerHTML={{ __html: `
+(function(){try{var t=localStorage.getItem('cb-theme')||'dark';document.documentElement.className=t;}catch(e){}})();
+        `}} />
 
         {/* PWA */}
-        <meta name="theme-color" content="#1D9E75" />
+        <meta name="theme-color" content="#38b6ff" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="CB HQ" />

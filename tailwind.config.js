@@ -5,34 +5,41 @@ module.exports = {
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        // Clean Buddies design tokens
+        // CSS-var-backed tokens — switch automatically with dark/light
         bg: {
-          base: '#0A0A0F',
-          surface: '#12121A',
-          elevated: '#1A1A24',
-          border: 'rgba(255,255,255,0.06)',
-        },
-        brand: {
-          green: '#1D9E75',
-          'green-dim': '#16785A',
-          'green-glow': 'rgba(29,158,117,0.15)',
-        },
-        accent: {
-          amber: '#EF9F27',
-          'amber-dim': 'rgba(239,159,39,0.15)',
-          red: '#E24B4A',
-          'red-dim': 'rgba(226,75,74,0.15)',
-          blue: '#378ADD',
-          'blue-dim': 'rgba(55,138,221,0.15)',
+          base:     'rgb(var(--bg-base) / <alpha-value>)',
+          surface:  'rgb(var(--bg-surface) / <alpha-value>)',
+          elevated: 'rgb(var(--bg-elevated) / <alpha-value>)',
         },
         text: {
-          primary: '#E8E8ED',
-          secondary: '#8A8A96',
-          tertiary: '#55555F',
+          primary:   'rgb(var(--text-primary) / <alpha-value>)',
+          secondary: 'rgb(var(--text-secondary) / <alpha-value>)',
+          tertiary:  'rgb(var(--text-tertiary) / <alpha-value>)',
         },
+        // Static brand colors
+        brand: {
+          green:        '#1D9E75',
+          'green-dim':  '#16785A',
+          'green-glow': 'rgba(29,158,117,0.15)',
+          blue:         '#38b6ff',
+          'blue-dim':   '#2a9de8',
+          'blue-glow':  'rgba(56,182,255,0.15)',
+        },
+        accent: {
+          amber:      '#EF9F27',
+          'amber-dim': 'rgba(239,159,39,0.15)',
+          red:        '#E24B4A',
+          'red-dim':  'rgba(226,75,74,0.15)',
+          blue:       '#378ADD',
+          'blue-dim': 'rgba(55,138,221,0.15)',
+        },
+      },
+      borderColor: {
+        subtle: 'var(--border)',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],

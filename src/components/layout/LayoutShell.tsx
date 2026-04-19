@@ -54,7 +54,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
       {!agentOpen && (
         <button
           onClick={() => setAgentOpen(true)}
-          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full bg-brand-green text-black font-semibold text-sm shadow-lg shadow-brand-green/20 hover:bg-brand-green/90 transition-all hover:shadow-brand-green/30 hover:shadow-xl active:scale-95"
+          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full bg-brand-blue text-white font-semibold text-sm shadow-lg shadow-brand-blue/20 hover:bg-brand-blue-dim transition-all hover:shadow-brand-blue/30 hover:shadow-xl active:scale-95"
           aria-label="Open CB Agent"
         >
           <Zap className="w-4 h-4" />

@@ -73,16 +73,16 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   return (
     <aside
       className={clsx(
-        'fixed left-0 top-0 h-full w-[220px] bg-bg-surface border-r border-white/[0.06] flex flex-col z-40',
+        'fixed left-0 top-0 h-full w-[220px] bg-bg-surface border-r border-subtle flex flex-col z-40',
         'transition-transform duration-300 ease-in-out',
         isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
       )}
     >
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-white/[0.06] flex items-center justify-between">
+      <div className="px-5 py-5 border-b border-subtle flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5 group" onClick={onClose}>
-          <div className="relative w-8 h-8 rounded-lg bg-brand-green/20 border border-brand-green/30 flex items-center justify-center flex-shrink-0">
-            <Zap className="w-4 h-4 text-brand-green" />
+          <div className="relative w-8 h-8 rounded-lg bg-brand-blue/20 border border-brand-blue/30 flex items-center justify-center flex-shrink-0">
+            <Zap className="w-4 h-4 text-brand-blue" />
             <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-brand-green pulse-live" />
           </div>
           <div>
@@ -113,14 +113,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               className={clsx(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group min-h-[44px]',
                 isActive
-                  ? 'bg-brand-green/10 text-brand-green font-medium'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-white/[0.04]'
+                  ? 'bg-brand-blue/10 text-brand-blue font-medium'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
               )}
             >
               <Icon
                 className={clsx(
                   'w-4 h-4 flex-shrink-0',
-                  isActive ? 'text-brand-green' : 'text-text-tertiary group-hover:text-text-secondary'
+                  isActive ? 'text-brand-blue' : 'text-text-tertiary group-hover:text-text-secondary'
                 )}
               />
               {label}
@@ -130,7 +130,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 </span>
               )}
               {isActive && (
-                <span className="ml-auto w-1 h-4 bg-brand-green rounded-full" />
+                <span className="ml-auto w-1 h-4 bg-brand-blue rounded-full" />
               )}
             </Link>
           )
@@ -138,16 +138,16 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       </nav>
 
       {/* User section */}
-      <div className="px-3 py-4 border-t border-white/[0.06] space-y-1">
+      <div className="px-3 py-4 border-t border-subtle space-y-1">
         <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg">
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-green to-brand-green-dim flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0">
+          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-blue to-brand-blue-dim flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0">
             {initials}
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium text-text-primary truncate capitalize">{displayName}</div>
             <div className="text-[10px] text-text-tertiary truncate">{userEmail ?? '...'}</div>
           </div>
-          <div className="w-1.5 h-1.5 rounded-full bg-brand-green flex-shrink-0" />
+          <div className="w-1.5 h-1.5 rounded-full bg-brand-blue flex-shrink-0" />
         </div>
         <button
           onClick={handleLogout}
